@@ -1,0 +1,497 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { UserAccount } from '../types';
+import { ShieldAlert, Mail, Lock, User, Key, UserCheck, AlertTriangle, Sparkles, Shield } from 'lucide-react';
+
+interface AuthPagesProps {
+  initialScreen?: 'login' | 'register' | 'forgot' | 'verify';
+  onAuthSuccess: (user: UserAccount | { id: string; email: string; name: string; role: 'user' | 'admin'; referralCode: string; wallet: any; balance: number; totalDeposited: number; totalWithdrawn: number; totalInvestment: number; totalProfitEarned: number; isEmailVerified: boolean; registrationDate: string; referredBy?: string }) => void;
+  onNavigate: (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => void;
+  usersList: UserAccount[];
+  addSystemLog: (type: any, desc: string, status: any) => void;
+  authReason?: string | null;
+}
+
+export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNavigate, usersList, addSystemLog, authReason }: AuthPagesProps) {
+  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'verify'>(initialScreen);
+
+  useEffect(() => {
+    setScreen(initialScreen);
+  }, [initialScreen]);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [referralCodeInput, setReferralCodeInput] = useState('');
+  const [enteredReferrer, setEnteredReferrer] = useState<string | undefined>(undefined);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [mockVerificationSentTo, setMockVerificationSentTo] = useState('');
+
+  // Handle Login
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!email || !password) {
+      setErrorMsg('Please specify both your login email and secret password.');
+      return;
+    }
+
+    // Smart simulation backends
+    const cleanEmail = email.trim().toLowerCase();
+    
+    // Find in the system usersList
+    const matchedUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+    if (matchedUser) {
+      addSystemLog('Login_Success', `Successful login verified for ${matchedUser.email}`, 'Secure');
+      onAuthSuccess({ ...matchedUser });
+    } else if (cleanEmail === 'admin@fundora.one') {
+      // Emergency Admin access
+      const adminAcc: UserAccount = {
+        id: 'user-admin',
+        email: 'admin@fundora.one',
+        name: 'Platform Administrator',
+        role: 'admin',
+        referralCode: 'FUNDORA_HQ',
+        wallet: { usdtTrc20Address: '', usdtBep20Address: '', isVerified: true },
+        balance: 99420.00,
+        totalDeposited: 0,
+        totalWithdrawn: 0,
+        totalInvestment: 0,
+        totalProfitEarned: 0,
+        isEmailVerified: true,
+        registrationDate: '2026-01-01'
+      };
+      addSystemLog('Admin_Action', `Admin authentication approved`, 'Secure');
+      onAuthSuccess(adminAcc);
+    } else {
+      // Simulate account auto-creation or error
+      addSystemLog('Login_Failure', `Failed authorization attempt for ${cleanEmail}`, 'Alarm');
+      setErrorMsg('Invalid email or password. Feel free to register a new account instantly below.');
+    }
+  };
+
+  // Handle Register
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!email || !fullName || !password) {
+      setErrorMsg('Please fill in all mandatory account fields.');
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    
+    // Ensure email is unique
+    if (usersList.some(u => u.email.toLowerCase() === cleanEmail)) {
+      setErrorMsg('This email address is already bound to another investor.');
+      return;
+    }
+
+    // Validate referral code if provided
+    let referrer: string | undefined = undefined;
+    if (referralCodeInput.trim()) {
+      const code = referralCodeInput.trim().toUpperCase();
+      const referrerUser = usersList.find(u => u.referralCode.toUpperCase() === code);
+      if (referrerUser) {
+        referrer = code;
+        setEnteredReferrer(code);
+      } else {
+        setErrorMsg('Invalid referral code. Please check or leave empty to register without code.');
+        return;
+      }
+    }
+
+    // Set up email verification flow
+    setMockVerificationSentTo(cleanEmail);
+    setScreen('verify');
+    addSystemLog('Register_Referral', `New registration initialized with email ${cleanEmail}. Referral code used: ${referrer || 'None'}`, 'Secure');
+  };
+
+  // Handle Verify Code
+  const handleVerify = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!verificationCode) {
+      setErrorMsg('Please enter the 6-digit confirmation code.');
+      return;
+    }
+
+    // Automatically allow any code in demo mode to ease client experiences
+    const newUser: UserAccount = {
+      id: `user-${Date.now()}`,
+      email: mockVerificationSentTo || email || 'saved_investor@gmail.com',
+      name: fullName || 'New Secure Investor',
+      role: 'user',
+      referralCode: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+      referredBy: enteredReferrer,
+      wallet: {
+        usdtTrc20Address: '',
+        usdtBep20Address: '',
+        isVerified: false
+      },
+      balance: 0, // Starts at zero, referral bonus triggers AFTER purchase
+      totalDeposited: 0,
+      totalWithdrawn: 0,
+      totalInvestment: 0,
+      totalProfitEarned: 0,
+      isEmailVerified: true,
+      registrationDate: new Date().toISOString().slice(0, 10)
+    };
+
+    addSystemLog('Wallet_Verification', `Email address ${newUser.email} verified successfully.`, 'Secure');
+    onAuthSuccess(newUser);
+  };
+
+  const handleForgotPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSuccessMsg(`A secure recovery token has been simulated to ${email}. Check your sandbox log.`);
+    setEmail('');
+  };
+
+  // Quick Autocomplete buttons for evaluation convenience
+  const fillDemoInvestor = () => {
+    setEmail('investor@gmail.com');
+    setPassword('demo1234');
+    setErrorMsg('');
+  };
+
+  const fillDemoAdmin = () => {
+    setEmail('admin@fundora.one');
+    setPassword('admin1234');
+    setErrorMsg('');
+  };
+
+  return (
+    <div id="fundora-auth-view" className="flex-1 flex flex-col justify-center px-6 pt-12 pb-28 md:py-12 bg-slate-950 text-slate-100 relative">
+      <div className="max-w-md w-full mx-auto space-y-6">
+        
+        {/* Logo Shield */}
+        <div className="text-center space-y-2">
+          <div className="w-12 h-12 bg-gradient-to-tr from-amber-500 to-emerald-500 rounded-2xl flex items-center justify-center mx-auto shadow-md">
+            <RadioBoxIcon className="w-6 h-6 text-slate-950" />
+          </div>
+          <h2 className="text-xl font-bold tracking-tight text-white uppercase font-sans">Fundora Portal</h2>
+          <p className="text-xs text-slate-400">Secure co-ownership real estate interface</p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          {/* Subtle decoration lines */}
+          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl"></div>
+
+          {/* Error & Success Messages */}
+          {authReason && (
+            <div className="mb-4 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start space-x-3 text-xs text-amber-300">
+              <ShieldAlert className="w-5 h-5 shrink-0 text-amber-400" />
+              <div>
+                <span className="font-bold block text-amber-200">Authentication Required</span>
+                <span className="mt-0.5 block leading-relaxed text-[11px] text-slate-300">
+                  Please sign in or register to access the <span className="text-amber-400 font-mono font-bold capitalize">"{authReason}"</span> feature of your fractional portfolio.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start space-x-2.5 text-xs text-red-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-start space-x-2.5 text-xs text-emerald-300">
+              <UserCheck className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {/* SCREEN 1: LOGIN */}
+          {screen === 'login' && (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Investor Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="investor@gmail.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Secret Password</label>
+                  <button 
+                    type="button"
+                    onClick={() => setScreen('forgot')}
+                    className="text-[10px] text-amber-400 hover:underline font-mono"
+                  >
+                    Forgot?
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow"
+              >
+                Access Account
+              </button>
+
+              {/* DEMO ACCOUNTS HELPER BOX */}
+              <div className="pt-2 border-t border-slate-800/80">
+                <span className="block text-[10px] font-mono text-slate-400 font-bold uppercase mb-2 text-center text-amber-400">✨ Fast Evaluation Credentials</span>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <button 
+                    type="button"
+                    onClick={fillDemoInvestor}
+                    className="p-2 bg-slate-950 border border-slate-800 hover:border-amber-500 rounded-lg text-left"
+                  >
+                    <span className="block font-bold text-slate-300">Investor view</span>
+                    <span className="text-slate-500 text-[9px] truncate block">investor@gmail.com</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={fillDemoAdmin}
+                    className="p-2 bg-slate-950 border border-slate-800 hover:border-amber-500 rounded-lg text-left"
+                  >
+                    <span className="block font-bold text-slate-300">Admin view</span>
+                    <span className="text-slate-500 text-[9px] truncate block">admin@fundora.one</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-center pt-2">
+                <span className="text-xs text-slate-400">New around here? </span>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg('');
+                    setScreen('register');
+                  }}
+                  className="text-xs text-amber-400 hover:underline font-bold"
+                >
+                  Register Account
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* SCREEN 2: REGISTER */}
+          {screen === 'register' && (
+            <form onSubmit={handleRegister} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Full Legal Name</label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="e.g. Oliver Davies"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="e.g. oliver.davies@outlook.co.uk"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Account Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Referral Code (Optional)</label>
+                  <span className="text-[9px] font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>Get 10% Bonus</span>
+                  </span>
+                </div>
+                <div className="relative">
+                  <Key className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="text"
+                    value={referralCodeInput}
+                    onChange={(e) => setReferralCodeInput(e.target.value)}
+                    placeholder="Enter friend's code (e.g. FUNDORA500)"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs uppercase focus:outline-none focus:border-amber-500 text-slate-100 placeholder:normal-case"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow"
+              >
+                Initialize Registration
+              </button>
+
+              <div className="text-center pt-2">
+                <span className="text-xs text-slate-400">Have an account? </span>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg('');
+                    setScreen('login');
+                  }}
+                  className="text-xs text-amber-400 hover:underline font-bold"
+                >
+                  Login Instead
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* SCREEN 3: FORGOT PASSWORD */}
+          {screen === 'forgot' && (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Enter your registered investment email address. The system will simulate sending recovery links directly to your control logs.
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400 font-bold">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="investor@gmail.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider shadow"
+              >
+                Send Sandbox Request
+              </button>
+
+              <div className="text-center pt-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg('');
+                    setScreen('login');
+                  }}
+                  className="text-xs text-amber-400 hover:underline font-bold"
+                >
+                  Return to Login
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* SCREEN 4: EMAIL VERIFICATION */}
+          {screen === 'verify' && (
+            <form onSubmit={handleVerify} className="space-y-4">
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 space-y-2">
+                <span className="font-bold underline block">🔧 AI Studio Code Sandbox Alert</span>
+                <p className="leading-relaxed text-[11px]">
+                  An email simulation with your verification code was dispatched to <strong className="text-white">{mockVerificationSentTo}</strong>.
+                </p>
+                <p className="text-[10px] font-mono">Any custom 6-digit pin code (e.g. <strong>123456</strong>) will proceed.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-center text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400">6-Digit Verification Code</label>
+                <input 
+                  type="text"
+                  maxLength={6}
+                  required
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  placeholder="123456"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 text-center text-sm font-mono tracking-widest focus:outline-none focus:border-amber-500 text-slate-100"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider"
+              >
+                Verify Sandbox Session
+              </button>
+            </form>
+          )}
+
+        </div>
+
+        {/* Back Button to landing homepage */}
+        <div className="text-center">
+          <button 
+            type="button"
+            onClick={() => onNavigate('home')}
+            className="text-xs text-slate-500 hover:text-slate-300 font-mono tracking-wide"
+          >
+            ← Back to Public Homepage
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// Icon helper
+function RadioBoxIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+    </svg>
+  );
+}

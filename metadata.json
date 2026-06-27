@@ -1,0 +1,6 @@
+{
+  "name": "Fundora Real Estate Investment Platform",
+  "description": "A premium, mobile-first real estate crowdfunding and investment platform featuring user and admin dashboards, multi-chain wallets, instant profit claiming, and an automated referral structure.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
