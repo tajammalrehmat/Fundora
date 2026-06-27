@@ -28,7 +28,8 @@ import {
   Transaction, 
   InvestmentRecord, 
   ProfitClaimRecord, 
-  SecurityLog 
+  SecurityLog,
+  SystemSettings
 } from '../types';
 
 // Helper to check if Firebase is correctly configured and working
@@ -275,3 +276,38 @@ export const deleteProjectFromFirebase = async (id: string) => {
     console.error('Failed to delete project from Firebase:', e);
   }
 };
+
+export const loadSystemSettingsFromFirebase = async (): Promise<SystemSettings> => {
+  const defaultSettings: SystemSettings = {
+    id: 'default',
+    usdtTrc20Address: 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy',
+    usdtBep20Address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+    scanGateTitle: 'Barcode Scanning Gateway',
+    scanGateSubtitle: 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.'
+  };
+
+  if (!isFirebaseEnabled()) return defaultSettings;
+  try {
+    const docRef = doc(db, 'system_settings', 'default');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as SystemSettings;
+    } else {
+      await setDoc(docRef, defaultSettings);
+      return defaultSettings;
+    }
+  } catch (e) {
+    console.error('Error loading system settings from Firebase:', e);
+    return defaultSettings;
+  }
+};
+
+export const saveSystemSettingsToFirebase = async (settings: SystemSettings) => {
+  if (!isFirebaseEnabled()) return;
+  try {
+    await setDoc(doc(db, 'system_settings', 'default'), settings);
+  } catch (e) {
+    console.error('Failed to save system settings to Firebase:', e);
+  }
+};
+

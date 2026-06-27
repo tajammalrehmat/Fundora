@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { RealEstateProject, Transaction, UserAccount, SecurityLog, ProjectCategory } from '../types';
+import { RealEstateProject, Transaction, UserAccount, SecurityLog, ProjectCategory, SystemSettings } from '../types';
 import { 
   Shield, Users, Landmark, Coins, FileText, Check, X, ShieldAlert,
   ArrowDownCircle, ArrowUpCircle, Plus, Eye, RefreshCw, Key, AlertOctagon, BarChart2,
@@ -29,6 +29,8 @@ interface AdminPanelProps {
   onUnbindUserWallet?: (userId: string, network: 'TRC20' | 'BEP20' | 'both') => void;
   onUpdateProject?: (updatedProject: RealEstateProject) => void;
   onDeleteProject?: (projectId: string) => void;
+  systemSettings?: SystemSettings;
+  onUpdateSystemSettings?: (settings: SystemSettings) => void;
 }
 
 export default function AdminPanel({
@@ -47,12 +49,102 @@ export default function AdminPanel({
   onAdjustUserFunds,
   onUnbindUserWallet,
   onUpdateProject,
-  onDeleteProject
+  onDeleteProject,
+  systemSettings = {
+    id: 'default',
+    usdtTrc20Address: 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy',
+    usdtBep20Address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+    scanGateTitle: 'Barcode Scanning Gateway',
+    scanGateSubtitle: 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.',
+    usdtTrc20QrCode: '',
+    usdtBep20QrCode: ''
+  },
+  onUpdateSystemSettings
 }: AdminPanelProps) {
-  const [localAdminTab, setLocalAdminTab] = useState<'stats' | 'deposits' | 'withdrawals' | 'projects' | 'users' | 'security'>('stats');
+  const [localAdminTab, setLocalAdminTab] = useState<'stats' | 'deposits' | 'withdrawals' | 'projects' | 'users' | 'security' | 'settings'>('stats');
 
   const adminTab = activeAdminTab !== undefined ? activeAdminTab : localAdminTab;
-  const setAdminTab = setActiveAdminTab !== undefined ? setActiveAdminTab : setLocalAdminTab;
+  const setAdminTab = setActiveAdminTab !== undefined ? (setActiveAdminTab as any) : setLocalAdminTab;
+
+  // Local state for system settings form
+  const [trc20Addr, setTrc20Addr] = useState<string>(systemSettings.usdtTrc20Address || '');
+  const [bep20Addr, setBep20Addr] = useState<string>(systemSettings.usdtBep20Address || '');
+  const [trc20QrCode, setTrc20QrCode] = useState<string>(systemSettings.usdtTrc20QrCode || '');
+  const [bep20QrCode, setBep20QrCode] = useState<string>(systemSettings.usdtBep20QrCode || '');
+  const [gateTitle, setGateTitle] = useState<string>(systemSettings.scanGateTitle);
+  const [gateSubtitle, setGateSubtitle] = useState<string>(systemSettings.scanGateSubtitle);
+
+  React.useEffect(() => {
+    setTrc20Addr(systemSettings.usdtTrc20Address || '');
+    setBep20Addr(systemSettings.usdtBep20Address || '');
+    setTrc20QrCode(systemSettings.usdtTrc20QrCode || '');
+    setBep20QrCode(systemSettings.usdtBep20QrCode || '');
+    setGateTitle(systemSettings.scanGateTitle);
+    setGateSubtitle(systemSettings.scanGateSubtitle);
+  }, [systemSettings]);
+
+  // Preview network switcher state
+  const [previewNetwork, setPreviewNetwork] = useState<'TRC20' | 'BEP20'>('TRC20');
+
+  const handleSaveSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onUpdateSystemSettings) {
+      onUpdateSystemSettings({
+        id: 'default',
+        usdtTrc20Address: trc20Addr.trim(),
+        usdtBep20Address: bep20Addr.trim(),
+        scanGateTitle: gateTitle.trim(),
+        scanGateSubtitle: gateSubtitle.trim(),
+        usdtTrc20QrCode: trc20QrCode.trim(),
+        usdtBep20QrCode: bep20QrCode.trim()
+      });
+      alert('Scanning gateway configuration successfully updated and locked into ledger!');
+    }
+  };
+
+  const handleRestoreDefaults = () => {
+    if (confirm('Are you sure you want to restore the platform defaults for the barcode scanning gateway?')) {
+      const defaultTrc20 = 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy';
+      const defaultBep20 = '0x71C7656EC7ab88b098defB751B7401B5f6d8976F';
+      const defaultTitle = 'Barcode Scanning Gateway';
+      const defaultSubtitle = 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.';
+
+      setTrc20Addr(defaultTrc20);
+      setBep20Addr(defaultBep20);
+      setTrc20QrCode('');
+      setBep20QrCode('');
+      setGateTitle(defaultTitle);
+      setGateSubtitle(defaultSubtitle);
+
+      if (onUpdateSystemSettings) {
+        onUpdateSystemSettings({
+          id: 'default',
+          usdtTrc20Address: defaultTrc20,
+          usdtBep20Address: defaultBep20,
+          scanGateTitle: defaultTitle,
+          scanGateSubtitle: defaultSubtitle,
+          usdtTrc20QrCode: '',
+          usdtBep20QrCode: ''
+        });
+      }
+      alert('Restored defaults successfully.');
+    }
+  };
+
+  const handleQrUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'TRC20' | 'BEP20') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result as string;
+      if (type === 'TRC20') {
+        setTrc20QrCode(base64);
+      } else {
+        setBep20QrCode(base64);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Dynamic stages for inline ROI settings
   const [editingRois, setEditingRois] = useState<Record<string, number>>({});
@@ -329,7 +421,8 @@ export default function AdminPanel({
           { id: 'withdrawals', label: `📤 Withdrawals (${pendingWithdrawals.length})` },
           { id: 'projects', label: '🏢 Projects Desk' },
           { id: 'users', label: '👥 User Ledgers' },
-          { id: 'security', label: '🛡️ Threat Logs' }
+          { id: 'security', label: '🛡️ Threat Logs' },
+          { id: 'settings', label: '⚙️ Scan Gate' }
         ].map((tab) => (
           <button
             key={tab.id}
@@ -1578,6 +1671,291 @@ export default function AdminPanel({
                   </div>
                 ))}
               </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ==================== TAB 7: SCAN GATE & GATEWAY SETTINGS ==================== */}
+        {adminTab === 'settings' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left Column: Form Settings */}
+            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+              <div className="border-b border-slate-800 pb-3">
+                <h3 className="text-sm font-mono font-bold uppercase tracking-wider text-red-400">⚙️ Barcode Scanning Gateway Config</h3>
+                <p className="text-[10px] text-slate-400 font-sans mt-1">
+                  Configure the primary deposit destination keycodes, branding labels, and warning texts displayed on the scan gate.
+                </p>
+              </div>
+
+              <form onSubmit={handleSaveSettings} className="space-y-4">
+                {/* TRC20 Address and QR Code */}
+                <div className="bg-slate-950/40 p-4 border border-slate-800 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-amber-500 uppercase font-bold block font-mono">USDT (TRC20 Network)</label>
+                    <span className="text-[9px] px-2 py-0.5 rounded font-bold font-mono bg-amber-500/10 text-amber-400">TRON NETWORK</span>
+                  </div>
+
+                  <div className="space-y-1.5 font-mono">
+                    <span className="text-[9px] text-slate-400 block font-bold">Wallet Address:</span>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={trc20Addr}
+                        onChange={(e) => setTrc20Addr(e.target.value)}
+                        placeholder="Disabled / Empty"
+                        className="w-full bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-slate-100 font-mono text-xs focus:outline-none focus:border-amber-500 focus:bg-slate-950"
+                      />
+                      {trc20Addr && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm('Are you sure you want to delete/clear the TRC20 Address? Users will not be able to deposit via TRC20.')) {
+                              setTrc20Addr('');
+                            }
+                          }}
+                          className="px-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold font-mono whitespace-nowrap cursor-pointer transition-colors"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 font-mono">
+                    <span className="text-[9px] text-slate-400 block font-bold">QR Code Image:</span>
+                    <div className="flex items-center gap-4 bg-slate-950 p-2.5 rounded-lg border border-slate-850">
+                      <div className="w-14 h-14 bg-white p-0.5 rounded flex items-center justify-center shrink-0 border border-slate-800">
+                        {trc20QrCode ? (
+                          <img src={trc20QrCode} alt="Custom TRC20 QR" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : trc20Addr ? (
+                          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(trc20Addr)}`} alt="Auto TRC20 QR" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="text-[7px] text-slate-500 text-center font-bold">No QR</span>
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-1.5">
+                        <label className="block text-[9px] bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 font-bold px-3 py-1.5 rounded-md text-center cursor-pointer transition-colors font-sans">
+                          📥 Upload Custom QR Code Image
+                          <input 
+                            type="file" 
+                            accept="image/*"
+                            className="hidden" 
+                            onChange={(e) => handleQrUpload(e, 'TRC20')} 
+                          />
+                        </label>
+                        {trc20QrCode && (
+                          <button
+                            type="button"
+                            onClick={() => setTrc20QrCode('')}
+                            className="w-full py-1 bg-red-500/5 hover:bg-red-500/15 border border-red-500/20 hover:border-red-500/30 text-red-400 text-[8px] font-bold uppercase rounded transition-colors cursor-pointer"
+                          >
+                            Remove Custom QR (Restore Auto)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* BEP20 Address and QR Code */}
+                <div className="bg-slate-950/40 p-4 border border-slate-800 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-emerald-400 uppercase font-bold block font-mono">USDT (BEP20 Network)</label>
+                    <span className="text-[9px] px-2 py-0.5 rounded font-bold font-mono bg-emerald-500/10 text-emerald-400">BSC BNB NETWORK</span>
+                  </div>
+
+                  <div className="space-y-1.5 font-mono">
+                    <span className="text-[9px] text-slate-400 block font-bold">Wallet Address:</span>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={bep20Addr}
+                        onChange={(e) => setBep20Addr(e.target.value)}
+                        placeholder="Disabled / Empty"
+                        className="w-full bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-slate-100 font-mono text-xs focus:outline-none focus:border-emerald-500 focus:bg-slate-950"
+                      />
+                      {bep20Addr && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm('Are you sure you want to delete/clear the BEP20 Address? Users will not be able to deposit via BEP20.')) {
+                              setBep20Addr('');
+                            }
+                          }}
+                          className="px-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold font-mono whitespace-nowrap cursor-pointer transition-colors"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 font-mono">
+                    <span className="text-[9px] text-slate-400 block font-bold">QR Code Image:</span>
+                    <div className="flex items-center gap-4 bg-slate-950 p-2.5 rounded-lg border border-slate-850">
+                      <div className="w-14 h-14 bg-white p-0.5 rounded flex items-center justify-center shrink-0 border border-slate-800">
+                        {bep20QrCode ? (
+                          <img src={bep20QrCode} alt="Custom BEP20 QR" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : bep20Addr ? (
+                          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(bep20Addr)}`} alt="Auto BEP20 QR" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="text-[7px] text-slate-500 text-center font-bold">No QR</span>
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-1.5">
+                        <label className="block text-[9px] bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 font-bold px-3 py-1.5 rounded-md text-center cursor-pointer transition-colors font-sans">
+                          📥 Upload Custom QR Code Image
+                          <input 
+                            type="file" 
+                            accept="image/*"
+                            className="hidden" 
+                            onChange={(e) => handleQrUpload(e, 'BEP20')} 
+                          />
+                        </label>
+                        {bep20QrCode && (
+                          <button
+                            type="button"
+                            onClick={() => setBep20QrCode('')}
+                            className="w-full py-1 bg-red-500/5 hover:bg-red-500/15 border border-red-500/20 hover:border-red-500/30 text-red-400 text-[8px] font-bold uppercase rounded transition-colors cursor-pointer"
+                          >
+                            Remove Custom QR (Restore Auto)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Scan Gate Title */}
+                <div className="space-y-1.5 font-mono">
+                  <label className="text-[10px] text-slate-400 uppercase font-bold block">Scan Gate Display Title</label>
+                  <input 
+                    type="text"
+                    required
+                    value={gateTitle}
+                    onChange={(e) => setGateTitle(e.target.value)}
+                    placeholder="Barcode Scanning Gateway"
+                    className="w-full bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-slate-100 font-sans text-xs focus:outline-none focus:border-red-500 focus:bg-slate-950"
+                  />
+                  <span className="text-[8px] text-slate-500 block">Main banner title of the scan gate container.</span>
+                </div>
+
+                {/* Scan Gate Subtitle / Warning text */}
+                <div className="space-y-1.5 font-mono">
+                  <label className="text-[10px] text-slate-400 uppercase font-bold block">Scan Gate Warning Subtitle</label>
+                  <textarea 
+                    rows={3}
+                    required
+                    value={gateSubtitle}
+                    onChange={(e) => setGateSubtitle(e.target.value)}
+                    placeholder="Enter subtitle warning text..."
+                    className="w-full bg-slate-950 border border-slate-850 rounded-xl px-4 py-2.5 text-slate-100 font-sans text-xs focus:outline-none focus:border-red-500 focus:bg-slate-950 resize-none"
+                  />
+                  <span className="text-[8px] text-slate-500 block">Dispatched guidelines to ensure users select matching blockchain networks.</span>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-gradient-to-r from-red-500 to-amber-600 hover:from-red-600 hover:to-amber-700 text-white font-mono uppercase text-xs font-bold rounded-xl transition-all shadow-lg cursor-pointer"
+                  >
+                    💾 Save Scanner Configuration
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRestoreDefaults}
+                    className="px-4 py-2 bg-slate-950 hover:bg-slate-850 border border-slate-850 text-slate-400 hover:text-slate-200 font-mono uppercase text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    🔄 Restore Defaults
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Right Column: Live Interactive User Preview */}
+            <div className="lg:col-span-5 bg-slate-950 border border-slate-900 rounded-2xl p-5 space-y-4">
+              <div className="border-b border-slate-900 pb-2 flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-mono font-bold uppercase tracking-wide text-slate-300">📱 Scan Gate Live Preview</h4>
+                  <p className="text-[8px] text-slate-500 font-sans mt-0.5">Real-time simulator of active user interface</p>
+                </div>
+                <span className="text-[8px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded uppercase font-bold animate-pulse">
+                  Live View
+                </span>
+              </div>
+
+              {/* simulated selector to test preview */}
+              <div className="flex gap-2 p-1.5 bg-slate-900/60 rounded-xl border border-slate-900 text-[10px] font-mono">
+                <span className="text-slate-400 self-center pl-1 font-bold">Network Toggle:</span>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewNetwork('TRC20')} 
+                  className={`px-3 py-1 rounded-lg uppercase font-bold transition-all cursor-pointer ${previewNetwork === 'TRC20' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  USDT-TRC20
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewNetwork('BEP20')} 
+                  className={`px-3 py-1 rounded-lg uppercase font-bold transition-all cursor-pointer ${previewNetwork === 'BEP20' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  USDT-BEP20
+                </button>
+              </div>
+
+              {/* The dynamic preview widget */}
+              <div className="bg-slate-900/40 border border-slate-900 p-4 rounded-xl space-y-3 font-mono text-slate-100 text-xs">
+                
+                <div className="space-y-1">
+                  <span className="text-[8px] text-amber-400 uppercase block font-bold tracking-widest leading-none">Company Wallet Contract</span>
+                  <div className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-900 gap-2">
+                    <span className="text-[10px] text-slate-300 truncate select-all">
+                      {previewNetwork === 'TRC20' ? (trc20Addr || 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy') : (bep20Addr || '0x71C7656EC7ab88b098defB751B7401B5f6d8976F')}
+                    </span>
+                    <span className="text-[8px] bg-slate-900 text-amber-400 px-1.5 py-0.5 rounded border border-slate-800 uppercase font-bold">
+                      Copy
+                    </span>
+                  </div>
+                </div>
+
+                {/* Scan Gate box */}
+                <div className="flex items-center space-x-3 bg-slate-950/60 p-3 text-[9px] text-slate-450 rounded-lg border border-slate-950">
+                  <div className="w-12 h-12 bg-white p-0.5 rounded shrink-0 flex items-center justify-center border border-slate-700 relative overflow-hidden select-none">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(
+                        previewNetwork === 'TRC20' ? (trc20Addr || 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy') : (bep20Addr || '0x71C7656EC7ab88b098defB751B7401B5f6d8976F')
+                      )}`} 
+                      alt="Dynamic Scan Gate QR"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-slate-300 block uppercase text-[8px] tracking-wider text-amber-400 font-sans">
+                      {gateTitle || 'Barcode Scanning Gateway'}
+                    </span>
+                    <span className="text-[8px] text-slate-400 leading-normal">
+                      {gateSubtitle || 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.'}
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Status information alert */}
+              <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl flex items-start gap-2.5 text-[10px] text-blue-350">
+                <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 font-sans leading-relaxed">
+                  <span className="font-bold uppercase tracking-wider block text-blue-400">Dynamic Scan QR Generator</span>
+                  <span>
+                    The applet utilizes standard API query-strings to encode your customized addresses into functional, high-density matrix barcodes instantly. No static assets require replacement.
+                  </span>
+                </div>
+              </div>
+
             </div>
 
           </div>

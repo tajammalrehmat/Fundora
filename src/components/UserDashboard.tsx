@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, getAvatarBgClass, getInvestorTier } from '../types';
+import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, getAvatarBgClass, getInvestorTier, SystemSettings } from '../types';
 import { 
   TrendingUp, Wallet, ArrowDownCircle, ArrowUpCircle, Users, Percent, Gift, Clock,
   Building, MapPin, Search, Filter, ShieldCheck, ChevronRight, Calculator, CheckCircle2,
@@ -14,6 +14,7 @@ import {
 
 interface UserDashboardProps {
   activeUser: UserAccount;
+  usersList?: UserAccount[];
   projects: RealEstateProject[];
   transactions: Transaction[];
   investments: InvestmentRecord[];
@@ -37,10 +38,12 @@ interface UserDashboardProps {
   // Sync tab state
   activeTab?: 'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile';
   setActiveTab?: (tab: 'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile') => void;
+  systemSettings?: SystemSettings;
 }
 
 export default function UserDashboard({
   activeUser,
+  usersList = [],
   projects,
   transactions,
   investments,
@@ -61,6 +64,15 @@ export default function UserDashboard({
   isTimeSimulated = false,
   activeTab: externalActiveTab,
   setActiveTab: externalSetActiveTab,
+  systemSettings = {
+    id: 'default',
+    usdtTrc20Address: 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy',
+    usdtBep20Address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+    scanGateTitle: 'Barcode Scanning Gateway',
+    scanGateSubtitle: 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.',
+    usdtTrc20QrCode: '',
+    usdtBep20QrCode: ''
+  }
 }: UserDashboardProps) {
   // Current Tab state
   const [internalActiveTab, setInternalActiveTab] = useState<'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile'>('overview');
@@ -105,6 +117,8 @@ export default function UserDashboard({
   const [depositHashInput, setDepositHashInput] = useState('');
   const [depositProofInput, setDepositProofInput] = useState(''); // Text representation / simulated file
   const [depositSuccessMsg, setDepositSuccessMsg] = useState('');
+  const [isAnalyzingReceipt, setIsAnalyzingReceipt] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Withdrawal Form Info
   const [withdrawAmount, setWithdrawAmount] = useState<number>(50);
@@ -204,10 +218,13 @@ export default function UserDashboard({
   }, [transactions]);
 
   // 10. Total Referrals (from completed transactions or pre-simulated logs)
+  const userReferrals = useMemo(() => {
+    return usersList.filter(u => u.referredBy === activeUser.referralCode);
+  }, [usersList, activeUser.referralCode]);
+
   const totalReferralsCount = useMemo(() => {
-    const refs = transactions.filter(t => t.type === 'Referral Bonus');
-    return refs.length > 0 ? refs.length + 1 : 2; // Returns custom mockup value matching metadata
-  }, [transactions]);
+    return userReferrals.length;
+  }, [userReferrals]);
 
   // Dynamic automatically calculated Investor Tier (Shield / Badge system)
   const userTier = useMemo(() => {
@@ -267,6 +284,78 @@ export default function UserDashboard({
     showStatus("Deposit receipt logged under status: PENDING verification.", "success");
     setDepositHashInput('');
     setDepositProofInput('');
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setDepositProofInput(file.name);
+    setIsAnalyzingReceipt(true);
+    showStatus(`Uploading "${file.name}" for scan...`, "info");
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result as string;
+        
+        try {
+          const response = await fetch('/api/analyze-receipt', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              base64Data,
+              mimeType: file.type,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server returned error status: ${response.status}`);
+          }
+
+          const result = await response.json();
+          if (result.success && result.data) {
+            const { txid, amount, network } = result.data;
+            let matchMessage = "";
+
+            if (txid) {
+              setDepositHashInput(txid);
+              matchMessage += `TxID (${txid.slice(0, 10)}...) `;
+            }
+
+            if (amount !== undefined && amount !== null && !isNaN(amount)) {
+              setDepositAmount(Number(amount));
+              matchMessage += `Amount (${amount} USDT) `;
+            }
+
+            if (network === 'TRC20' || network === 'BEP20') {
+              setDepositNetwork(network);
+              matchMessage += `Network (${network}) `;
+            }
+
+            if (matchMessage) {
+              showStatus(`✨ AI auto-fetched: ${matchMessage} from screenshot!`, "success");
+            } else {
+              showStatus(`✓ Image "${file.name}" uploaded. No specific details were auto-extracted.`, "success");
+            }
+          } else {
+            showStatus(`✓ Image "${file.name}" uploaded as payment proof.`, "success");
+          }
+        } catch (apiErr: any) {
+          console.error("API error during receipt analysis:", apiErr);
+          showStatus(`✓ Image "${file.name}" attached. (AI auto-fetch unavailable, please type TxID/amount manually)`, "info");
+        } finally {
+          setIsAnalyzingReceipt(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("FileReader error:", err);
+      setIsAnalyzingReceipt(false);
+      showStatus("Failed to read selected screenshot file.", "error");
+    }
   };
 
   const handleWithdrawalSubmit = (e: React.FormEvent) => {
@@ -1494,22 +1583,27 @@ export default function UserDashboard({
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
                       <div className="w-full truncate">
                         <span className="text-[8px] text-amber-400 uppercase block font-bold tracking-widest leading-none mb-1">Company Wallet Contract</span>
-                        <span className="text-[10px] text-slate-350 select-all block truncate font-mono">
-                          {depositNetwork === 'TRC20' 
-                            ? 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy' 
-                            : '0x71C7656EC7ab88b098defB751B7401B5f6d8976F'}
+                        <span className={`text-[10px] select-all block truncate font-mono ${
+                          (depositNetwork === 'TRC20' ? systemSettings.usdtTrc20Address : systemSettings.usdtBep20Address)
+                            ? 'text-slate-350'
+                            : 'text-red-400 italic font-sans font-bold'
+                        }`}>
+                          {(depositNetwork === 'TRC20' 
+                            ? (systemSettings.usdtTrc20Address || '') 
+                            : (systemSettings.usdtBep20Address || '')) || '⚠️ Wallet not configured by admin'}
                         </span>
                       </div>
                       
                       <button
                         type="button"
+                        disabled={!(depositNetwork === 'TRC20' ? systemSettings.usdtTrc20Address : systemSettings.usdtBep20Address)}
                         onClick={() => triggerCopy(
                           depositNetwork === 'TRC20' 
-                            ? 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy' 
-                            : '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+                            ? (systemSettings.usdtTrc20Address || '') 
+                            : (systemSettings.usdtBep20Address || ''),
                           'address'
                         )}
-                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 rounded-lg text-[9px] uppercase border border-slate-800 text-amber-400 font-bold tracking-wider shrink-0 shadow-xs transition-colors cursor-pointer"
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-[9px] uppercase border border-slate-800 text-amber-400 font-bold tracking-wider shrink-0 shadow-xs transition-colors cursor-pointer"
                       >
                         {copiedText === 'address' ? 'Copied' : 'Copy Key'}
                       </button>
@@ -1517,15 +1611,52 @@ export default function UserDashboard({
 
                     {/* QR Code container with laser tracker */}
                     <div className="flex items-center space-x-3.5 bg-slate-900/60 p-3 text-[9px] text-slate-400 rounded-lg border border-slate-900/80">
-                      <div className="w-12 h-12 bg-white p-1 rounded shrink-0 flex flex-col items-center justify-center font-bold text-slate-950 border border-slate-700 relative overflow-hidden select-none">
-                        <div className="absolute top-0 bottom-0 left-0 right-0 border-2 border-emerald-500/25 animate-pulse"></div>
-                        <div className="w-8 h-8 bg-slate-950 text-slate-100 flex items-center justify-center rounded uppercase tracking-tighter text-[5px] font-black leading-tight text-center">
-                          SCAN<br/>GATE
-                        </div>
+                      <div className="w-12 h-12 bg-white p-0.5 rounded shrink-0 flex items-center justify-center border border-slate-700 relative overflow-hidden select-none">
+                        {depositNetwork === 'TRC20' ? (
+                          systemSettings.usdtTrc20QrCode ? (
+                            <img 
+                              src={systemSettings.usdtTrc20QrCode} 
+                              alt="USDT TRC20 QR Code"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : systemSettings.usdtTrc20Address ? (
+                            <img 
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(systemSettings.usdtTrc20Address)}`} 
+                              alt="USDT TRC20 QR Code"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="text-[8px] text-slate-500 text-center flex items-center justify-center h-full">No QR</div>
+                          )
+                        ) : (
+                          systemSettings.usdtBep20QrCode ? (
+                            <img 
+                              src={systemSettings.usdtBep20QrCode} 
+                              alt="USDT BEP20 QR Code"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : systemSettings.usdtBep20Address ? (
+                            <img 
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(systemSettings.usdtBep20Address)}`} 
+                              alt="USDT BEP20 QR Code"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="text-[8px] text-slate-500 text-center flex items-center justify-center h-full">No QR</div>
+                          )
+                        )}
                       </div>
                       <div className="space-y-0.5">
-                        <span className="font-bold text-slate-300 block uppercase text-[8px] tracking-wider text-amber-400 font-sans">Barcode Scanning Gateway</span>
-                        <span className="text-[8px] text-slate-400">Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.</span>
+                        <span className="font-bold text-slate-300 block uppercase text-[8px] tracking-wider text-amber-400 font-sans">
+                          {systemSettings.scanGateTitle || 'Barcode Scanning Gateway'}
+                        </span>
+                        <span className="text-[8px] text-slate-400">
+                          {systemSettings.scanGateSubtitle || 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.'}
+                        </span>
                       </div>
                     </div>
 
@@ -1548,28 +1679,49 @@ export default function UserDashboard({
                   <div className="space-y-1.5 font-mono text-[10px]">
                     <span className="text-[10px] text-slate-500 uppercase font-bold block">Payment Receipt Proof</span>
                     
+                    {/* Hidden Native File Input */}
+                    <input 
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept="image/*"
+                      className="hidden"
+                    />
+
                     <div 
                       onClick={() => {
-                        const simulatedName = `receipt_tx_usdt_${Date.now().toString().slice(-4)}.png`;
-                        setDepositProofInput(simulatedName);
-                        showStatus(`Mock image "${simulatedName}" selected as proof. Ready for audit dispatch.`, "success");
+                        if (!isAnalyzingReceipt) {
+                          fileInputRef.current?.click();
+                        }
                       }}
-                      className="border border-dashed border-slate-250 hover:border-amber-500 bg-slate-50/50 hover:bg-slate-100/50 p-4 rounded-xl text-center space-y-1.5 cursor-pointer transition-all"
+                      className="border border-dashed border-slate-250 hover:border-amber-500 bg-slate-50/50 hover:bg-slate-100/50 p-4 rounded-xl text-center space-y-1.5 cursor-pointer transition-all relative overflow-hidden"
                     >
-                      <Upload className="w-5 h-5 mx-auto text-amber-500" />
-                      <div>
-                        {depositProofInput ? (
-                          <div className="space-y-1">
-                            <span className="text-[10px] text-emerald-600 font-bold block">✓ {depositProofInput} (148 KB)</span>
-                            <span className="text-[8px] text-slate-400 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 uppercase tracking-widest inline-block font-black">Uploaded Successfully & Readied</span>
+                      {isAnalyzingReceipt ? (
+                        <div className="py-2 space-y-2 flex flex-col items-center justify-center">
+                          <RefreshCw className="w-6 h-6 text-amber-500 animate-spin" />
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] text-amber-600 font-bold block uppercase tracking-wider animate-pulse">Scanning Receipt...</span>
+                            <span className="text-[8px] text-slate-400 block">Extracting transaction hash, amount & network</span>
                           </div>
-                        ) : (
-                          <>
-                            <span className="text-[10px] text-slate-705 font-bold block">Click to upload snapshot receipt</span>
-                            <span className="text-[8px] text-slate-400 block">Simulate select slip image file</span>
-                          </>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <>
+                          <Upload className="w-5 h-5 mx-auto text-amber-500" />
+                          <div>
+                            {depositProofInput ? (
+                              <div className="space-y-1">
+                                <span className="text-[10px] text-emerald-600 font-bold block">✓ {depositProofInput}</span>
+                                <span className="text-[8px] text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 uppercase tracking-widest inline-block font-black">Ready for audit dispatch</span>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="text-[10px] text-slate-705 font-bold block">Click to upload snapshot receipt</span>
+                                <span className="text-[8px] text-slate-400 block">Upload transaction screenshot from your device</span>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -2052,24 +2204,32 @@ export default function UserDashboard({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-center text-slate-705">
-                      <tr className="hover:bg-slate-50/50">
-                        <td className="p-3 text-left font-sans text-slate-800 whitespace-nowrap">william.brooks@outlook.com</td>
-                        <td className="p-3 font-semibold text-emerald-600 whitespace-nowrap">$11.30 USDT</td>
-                        <td className="p-3 whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded text-[8px] tracking-wide font-extrabold uppercase bg-emerald-100 text-emerald-800 inline-block">
-                            Active Profit
-                          </span>
-                        </td>
-                      </tr>
-                      <tr className="hover:bg-slate-50/50">
-                        <td className="p-3 text-left font-sans text-slate-850 whitespace-nowrap">sophie.leeds@yahoo.co.uk</td>
-                        <td className="p-3 font-semibold text-slate-500 whitespace-nowrap">$0.00 USDT</td>
-                        <td className="p-3 whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded text-[8px] tracking-wide font-extrabold uppercase bg-slate-100 text-slate-500 animate-pulse inline-block">
-                            Pending Purchase
-                          </span>
-                        </td>
-                      </tr>
+                      {userReferrals.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="p-6 text-center text-slate-400 font-sans">
+                            No partners or associates referred yet. Share your link above to build your team!
+                          </td>
+                        </tr>
+                      ) : (
+                        userReferrals.map((referredUser) => {
+                          // Try to find the referral bonus transaction in the user's transactions list
+                          const bonusTx = transactions.find(t => t.type === 'Referral Bonus' && t.description?.toLowerCase().includes(referredUser.email.toLowerCase()));
+                          const bonusPaid = bonusTx ? bonusTx.amount : 0;
+                          const hasInvested = referredUser.totalInvestment > 0 || (bonusTx && bonusTx.status === 'Completed');
+                          
+                          return (
+                            <tr key={referredUser.id} className="hover:bg-slate-50/50">
+                              <td className="p-3 text-left font-sans text-slate-800 whitespace-nowrap">{referredUser.email}</td>
+                              <td className="p-3 font-semibold text-emerald-600 whitespace-nowrap">${bonusPaid.toFixed(2)} USDT</td>
+                              <td className="p-3 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[8px] tracking-wide font-extrabold uppercase inline-block ${hasInvested ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500 animate-pulse'}`}>
+                                  {hasInvested ? 'Active Profit' : 'Pending Purchase'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>

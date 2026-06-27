@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserAccount } from '../types';
-import { ShieldAlert, Mail, Lock, User, Key, UserCheck, AlertTriangle, Sparkles, Shield } from 'lucide-react';
+import { ShieldAlert, Mail, Lock, User, Key, UserCheck, AlertTriangle, Sparkles, Shield, Loader2 } from 'lucide-react';
+import { sendOtpEmail, isEmailServiceConfigured } from '../lib/emailService';
 
 interface AuthPagesProps {
   initialScreen?: 'login' | 'register' | 'forgot' | 'verify';
@@ -14,9 +15,10 @@ interface AuthPagesProps {
   usersList: UserAccount[];
   addSystemLog: (type: any, desc: string, status: any) => void;
   authReason?: string | null;
+  onRegisterPending?: (user: UserAccount) => void;
 }
 
-export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNavigate, usersList, addSystemLog, authReason }: AuthPagesProps) {
+export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNavigate, usersList, addSystemLog, authReason, onRegisterPending }: AuthPagesProps) {
   const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'verify'>(initialScreen);
 
   useEffect(() => {
@@ -31,6 +33,9 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [mockVerificationSentTo, setMockVerificationSentTo] = useState('');
+  const [generatedOtp, setGeneratedOtp] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [showBackupCode, setShowBackupCode] = useState(false);
 
   // Handle Login
   const handleLogin = (e: React.FormEvent) => {
@@ -78,7 +83,7 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
   };
 
   // Handle Register
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -90,10 +95,63 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
 
     const cleanEmail = email.trim().toLowerCase();
     
-    // Ensure email is unique
-    if (usersList.some(u => u.email.toLowerCase() === cleanEmail)) {
-      setErrorMsg('This email address is already bound to another investor.');
-      return;
+    // Check if user already exists
+    const existingUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+    if (existingUser) {
+      if (existingUser.isEmailVerified) {
+        setErrorMsg('This email address is already bound to another registered investor. Please log in.');
+        return;
+      } else {
+        // This is a pending/unverified user. Let's send a new OTP and let them complete signup
+        let referrer: string | undefined = existingUser.referredBy;
+        if (referralCodeInput.trim()) {
+          const code = referralCodeInput.trim().toUpperCase();
+          const referrerUser = usersList.find(u => u.referralCode.toUpperCase() === code);
+          if (referrerUser) {
+            referrer = code;
+            setEnteredReferrer(code);
+          } else {
+            setErrorMsg('Invalid referral code. Please check or leave empty.');
+            return;
+          }
+        }
+
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        setGeneratedOtp(code);
+        setMockVerificationSentTo(cleanEmail);
+        setIsSendingOtp(true);
+
+        try {
+          const res = await sendOtpEmail({
+            toEmail: cleanEmail,
+            toName: fullName || existingUser.name,
+            otpCode: code
+          });
+          setIsSendingOtp(false);
+          
+          const updatedPendingUser: UserAccount = {
+            ...existingUser,
+            name: fullName || existingUser.name,
+            referredBy: referrer,
+          };
+          
+          if (onRegisterPending) {
+            onRegisterPending(updatedPendingUser);
+          }
+
+          if (res.success) {
+            setSuccessMsg(`Your registration is already in progress. A new verification OTP code has been sent to ${cleanEmail}.`);
+          } else {
+            console.warn("Real-time email sending fallback triggered:", res.error);
+          }
+          setScreen('verify');
+          addSystemLog('Register_Referral', `Pending registration resumed for ${cleanEmail}. OTP ${code} dispatched.`, 'Secure');
+        } catch (err) {
+          setIsSendingOtp(false);
+          setScreen('verify');
+        }
+        return;
+      }
     }
 
     // Validate referral code if provided
@@ -110,10 +168,56 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
       }
     }
 
-    // Set up email verification flow
+    // Set up email verification flow with real-time OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(code);
     setMockVerificationSentTo(cleanEmail);
-    setScreen('verify');
-    addSystemLog('Register_Referral', `New registration initialized with email ${cleanEmail}. Referral code used: ${referrer || 'None'}`, 'Secure');
+    setIsSendingOtp(true);
+
+    try {
+      const res = await sendOtpEmail({
+        toEmail: cleanEmail,
+        toName: fullName,
+        otpCode: code
+      });
+      setIsSendingOtp(false);
+      
+      const pendingUser: UserAccount = {
+        id: `user-${Date.now()}`,
+        email: cleanEmail,
+        name: fullName,
+        role: 'user',
+        referralCode: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+        referredBy: referrer,
+        wallet: {
+          usdtTrc20Address: '',
+          usdtBep20Address: '',
+          isVerified: false
+        },
+        balance: 0,
+        totalDeposited: 0,
+        totalWithdrawn: 0,
+        totalInvestment: 0,
+        totalProfitEarned: 0,
+        isEmailVerified: false,
+        registrationDate: new Date().toISOString().slice(0, 10)
+      };
+
+      if (onRegisterPending) {
+        onRegisterPending(pendingUser);
+      }
+
+      if (res.success) {
+        setSuccessMsg(`A verification code was sent to ${cleanEmail} via fundora.one.`);
+      } else {
+        console.warn("Real-time email sending fallback triggered:", res.error);
+      }
+      setScreen('verify');
+      addSystemLog('Register_Referral', `New registration initialized with email ${cleanEmail}. OTP ${code} dispatched. Referral code used: ${referrer || 'None'}`, 'Secure');
+    } catch (err) {
+      setIsSendingOtp(false);
+      setScreen('verify');
+    }
   };
 
   // Handle Verify Code
@@ -124,26 +228,33 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
       return;
     }
 
-    // Automatically allow any code in demo mode to ease client experiences
+    // Ensure entered OTP code is correct
+    if (verificationCode.trim() !== generatedOtp) {
+      setErrorMsg('Invalid verification code. Please enter the correct 6-digit OTP code dispatched to your email.');
+      return;
+    }
+
+    const pendingUser = usersList.find(u => u.email.toLowerCase() === (mockVerificationSentTo || email).trim().toLowerCase());
+
     const newUser: UserAccount = {
-      id: `user-${Date.now()}`,
+      id: pendingUser ? pendingUser.id : `user-${Date.now()}`,
       email: mockVerificationSentTo || email || 'saved_investor@gmail.com',
-      name: fullName || 'New Secure Investor',
+      name: fullName || (pendingUser ? pendingUser.name : 'New Secure Investor'),
       role: 'user',
-      referralCode: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-      referredBy: enteredReferrer,
-      wallet: {
+      referralCode: pendingUser ? pendingUser.referralCode : `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+      referredBy: pendingUser ? pendingUser.referredBy : enteredReferrer,
+      wallet: pendingUser ? pendingUser.wallet : {
         usdtTrc20Address: '',
         usdtBep20Address: '',
         isVerified: false
       },
-      balance: 0, // Starts at zero, referral bonus triggers AFTER purchase
-      totalDeposited: 0,
-      totalWithdrawn: 0,
-      totalInvestment: 0,
-      totalProfitEarned: 0,
+      balance: pendingUser ? pendingUser.balance : 0,
+      totalDeposited: pendingUser ? pendingUser.totalDeposited : 0,
+      totalWithdrawn: pendingUser ? pendingUser.totalWithdrawn : 0,
+      totalInvestment: pendingUser ? pendingUser.totalInvestment : 0,
+      totalProfitEarned: pendingUser ? pendingUser.totalProfitEarned : 0,
       isEmailVerified: true,
-      registrationDate: new Date().toISOString().slice(0, 10)
+      registrationDate: pendingUser ? pendingUser.registrationDate : new Date().toISOString().slice(0, 10)
     };
 
     addSystemLog('Wallet_Verification', `Email address ${newUser.email} verified successfully.`, 'Secure');
@@ -371,9 +482,17 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
 
               <button
                 type="submit"
-                className="w-full py-3 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow"
+                disabled={isSendingOtp}
+                className="w-full py-3 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
               >
-                Initialize Registration
+                {isSendingOtp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                    <span>Dispatched Verification Code...</span>
+                  </>
+                ) : (
+                  <span>Initialize Registration</span>
+                )}
               </button>
 
               <div className="text-center pt-2">
@@ -439,32 +558,39 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
           {/* SCREEN 4: EMAIL VERIFICATION */}
           {screen === 'verify' && (
             <form onSubmit={handleVerify} className="space-y-4">
-              <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 space-y-2">
-                <span className="font-bold underline block">🔧 AI Studio Code Sandbox Alert</span>
-                <p className="leading-relaxed text-[11px]">
-                  An email simulation with your verification code was dispatched to <strong className="text-white">{mockVerificationSentTo}</strong>.
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-3">
+                <div className="flex items-center space-x-2 text-emerald-400">
+                  <Mail className="w-4 h-4 animate-bounce" />
+                  <span className="font-bold tracking-wide">📨 OTP Verification Dispatched</span>
+                </div>
+                
+                <p className="leading-relaxed text-slate-300 text-[11px]">
+                  An authentication code was dispatched to your email address <strong className="text-white font-mono">{mockVerificationSentTo}</strong>.
                 </p>
-                <p className="text-[10px] font-mono">Any custom 6-digit pin code (e.g. <strong>123456</strong>) will proceed.</p>
+
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl text-[11px] leading-relaxed text-center">
+                  <p>Check your email inbox or spam folder for your 6-digit confirmation code.</p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-center text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400">6-Digit Verification Code</label>
+                <label className="block text-center text-[10px] uppercase font-mono font-bold tracking-widest text-slate-400">Enter 6-Digit OTP Code</label>
                 <input 
                   type="text"
                   maxLength={6}
                   required
                   value={verificationCode}
                   onChange={(e) => setVerificationCode(e.target.value)}
-                  placeholder="123456"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 text-center text-sm font-mono tracking-widest focus:outline-none focus:border-amber-500 text-slate-100"
+                  placeholder="------"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 text-center text-sm font-mono tracking-widest focus:outline-none focus:border-emerald-500 text-slate-100 placeholder-slate-700 font-bold"
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider"
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-colors shadow"
               >
-                Verify Sandbox Session
+                Complete Verification & Register
               </button>
             </form>
           )}

@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { RealEstateProject } from '../types';
+import { RealEstateProject, UserAccount } from '../types';
 import { INITIAL_PROJECTS, FAQS, STATIC_REPORTS } from '../data';
 import { 
   Building, Users, Landmark, Coins, ChevronRight, HelpCircle, 
@@ -15,9 +15,10 @@ import fundoraCertificateImg from '../assets/images/fundora_certificate_17823756
 interface LandingPageProps {
   onNavigate: (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => void;
   onSelectProject: (project: RealEstateProject) => void;
+  activeUser: UserAccount | null;
 }
 
-export default function LandingPage({ onNavigate, onSelectProject }: LandingPageProps) {
+export default function LandingPage({ onNavigate, onSelectProject, activeUser }: LandingPageProps) {
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
@@ -62,7 +63,17 @@ export default function LandingPage({ onNavigate, onSelectProject }: LandingPage
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <button
               id="cta-get-started"
-              onClick={() => onNavigate('register')}
+              onClick={() => {
+                if (activeUser) {
+                  if (activeUser.role === 'admin') {
+                    onNavigate('admin');
+                  } else {
+                    onNavigate('dashboard');
+                  }
+                } else {
+                  onNavigate('register');
+                }
+              }}
               className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2"
             >
               <span>Get Started Now</span>
@@ -218,7 +229,17 @@ export default function LandingPage({ onNavigate, onSelectProject }: LandingPage
               <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">explore active investment properties</h2>
             </div>
             <button 
-              onClick={() => onNavigate('login')}
+              onClick={() => {
+                if (activeUser) {
+                  if (activeUser.role === 'admin') {
+                    onNavigate('admin');
+                  } else {
+                    onNavigate('dashboard');
+                  }
+                } else {
+                  onNavigate('login');
+                }
+              }}
               className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl text-xs font-semibold text-slate-300 transition-all flex items-center gap-1.5 align-middle"
             >
               <span>View All Properties</span>

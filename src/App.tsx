@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import MobileShell from './components/MobileShell';
 import LandingPage from './components/LandingPage';
 import AuthPages from './components/AuthPages';
 import UserDashboard from './components/UserDashboard';
 import AdminPanel from './components/AdminPanel';
 import GlobalNavbar from './components/GlobalNavbar';
-import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, SecurityLog } from './types';
+import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, SecurityLog, SystemSettings } from './types';
 import { INITIAL_PROJECTS, INITIAL_USER, INITIAL_ADMIN, INITIAL_TRANSACTIONS, INITIAL_SECURITY_LOGS } from './data';
 import { 
   seedInitialDataIfEmpty,
@@ -27,11 +27,23 @@ import {
   saveClaimToFirebase,
   saveSecurityLogToFirebase,
   deleteProjectFromFirebase,
-  isFirebaseEnabled
+  isFirebaseEnabled,
+  loadSystemSettingsFromFirebase,
+  saveSystemSettingsToFirebase
 } from './lib/firebaseSync';
 
 export default function App() {
   const [isFirebaseSynced, setIsFirebaseSynced] = useState<boolean>(false);
+  const isInitialSyncRef = useRef(true);
+
+  useEffect(() => {
+    if (isFirebaseSynced) {
+      const timer = setTimeout(() => {
+        isInitialSyncRef.current = false;
+      }, 1000); // 1s cooldown to prevent startup writes
+      return () => clearTimeout(timer);
+    }
+  }, [isFirebaseSynced]);
   // Navigation states
   const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'admin'>('home');
   const [activeDashboardTab, setActiveDashboardTab] = useState<'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile'>('overview');
@@ -108,6 +120,17 @@ export default function App() {
   const [securityLogsList, setSecurityLogsList] = useState<SecurityLog[]>(() => {
     const saved = localStorage.getItem('inv_security_logs');
     return saved ? JSON.parse(saved) : INITIAL_SECURITY_LOGS;
+  });
+
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
+    const saved = localStorage.getItem('inv_system_settings');
+    return saved ? JSON.parse(saved) : {
+      id: 'default',
+      usdtTrc20Address: 'TX1h2A9eFm7xKsZ8Jq9wDpBcNdKyLmTqRy',
+      usdtBep20Address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+      scanGateTitle: 'Barcode Scanning Gateway',
+      scanGateSubtitle: 'Dispatch on the matching blockchain. Tokens sent to mismatched networks are irreversibly lost.'
+    };
   });
 
   // Real-time clock settings (starts matching real local timezone, updates dynamically)
@@ -208,52 +231,59 @@ export default function App() {
   // Auto-Persist states to browser local storage & Firestore (Only after initial synchronization completes!)
   useEffect(() => {
     localStorage.setItem('inv_projects', JSON.stringify(projectsList));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       projectsList.forEach(proj => saveProjectToFirebase(proj));
     }
   }, [projectsList, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_transactions', JSON.stringify(transactionsList));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       transactionsList.forEach(tx => saveTransactionToFirebase(tx));
     }
   }, [transactionsList, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_users', JSON.stringify(usersListState));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       usersListState.forEach(user => saveUserToFirebase(user));
     }
   }, [usersListState, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_active_user', activeUser ? JSON.stringify(activeUser) : '');
-    if (isFirebaseSynced && isFirebaseEnabled() && activeUser) {
+    if (isFirebaseSynced && isFirebaseEnabled() && activeUser && !isInitialSyncRef.current) {
       saveUserToFirebase(activeUser);
     }
   }, [activeUser, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_investments', JSON.stringify(investmentsList));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       investmentsList.forEach(inv => saveInvestmentToFirebase(inv));
     }
   }, [investmentsList, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_claims', JSON.stringify(claimsHistory));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       claimsHistory.forEach(cl => saveClaimToFirebase(cl));
     }
   }, [claimsHistory, isFirebaseSynced]);
 
   useEffect(() => {
     localStorage.setItem('inv_security_logs', JSON.stringify(securityLogsList));
-    if (isFirebaseSynced && isFirebaseEnabled()) {
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
       securityLogsList.forEach(log => saveSecurityLogToFirebase(log));
     }
   }, [securityLogsList, isFirebaseSynced]);
+
+  useEffect(() => {
+    localStorage.setItem('inv_system_settings', JSON.stringify(systemSettings));
+    if (isFirebaseSynced && isFirebaseEnabled() && !isInitialSyncRef.current) {
+      saveSystemSettingsToFirebase(systemSettings);
+    }
+  }, [systemSettings, isFirebaseSynced]);
 
   // Initial boot: Seed & Load everything from Firebase!
   useEffect(() => {
@@ -270,13 +300,14 @@ export default function App() {
 
       // Load all collections
       try {
-        const [projects, users, transactions, investments, claims, logs] = await Promise.all([
+        const [projects, users, transactions, investments, claims, logs, settings] = await Promise.all([
           loadProjectsFromFirebase(),
           loadUsersFromFirebase(),
           loadTransactionsFromFirebase(),
           loadInvestmentsFromFirebase(),
           loadClaimsFromFirebase(),
-          loadSecurityLogsFromFirebase()
+          loadSecurityLogsFromFirebase(),
+          loadSystemSettingsFromFirebase()
         ]);
 
         if (projects && projects.length > 0) setProjectsList(projects);
@@ -285,6 +316,7 @@ export default function App() {
         if (investments) setInvestmentsList(investments);
         if (claims) setClaimsHistory(claims);
         if (logs) setSecurityLogsList(logs);
+        if (settings) setSystemSettings(settings);
 
         // Also update active user from the fresh database if there was one saved in localStorage
         const savedActiveUser = localStorage.getItem('inv_active_user');
@@ -438,6 +470,17 @@ export default function App() {
     } else {
       setCurrentPage('dashboard');
     }
+  };
+
+  // Add pending register user to usersListState to allow resumption
+  const handleRegisterPending = (pendingUser: UserAccount) => {
+    setUsersListState(prev => {
+      const exists = prev.some(u => u.email.toLowerCase() === pendingUser.email.toLowerCase());
+      if (exists) {
+        return prev.map(u => u.email.toLowerCase() === pendingUser.email.toLowerCase() ? { ...u, ...pendingUser } : u);
+      }
+      return [...prev, pendingUser];
+    });
   };
 
   const handleLogout = () => {
@@ -814,6 +857,12 @@ export default function App() {
     addSystemLog('Admin_Action', `Compliance Admin reset/unbound ${network} wallet address for ${userEmail}.`, 'Secure');
   };
 
+  // Update Barcode Scanning Gateway / Scan Gate settings
+  const handleUpdateSystemSettings = (newSettings: SystemSettings) => {
+    setSystemSettings(newSettings);
+    addSystemLog('Admin_Action', `Compliance Admin updated deposit scan gate settings. TRC20 [${newSettings.usdtTrc20Address}], BEP20 [${newSettings.usdtBep20Address}]`, 'Secure');
+  };
+
   // Add new property options
   const handleAddProject = (newProj: RealEstateProject) => {
     setProjectsList(prev => [newProj, ...prev]);
@@ -1087,8 +1136,21 @@ export default function App() {
 
   // Landing page interactive selection
   const handleSelectProjectFromLanding = (project: RealEstateProject) => {
-    // Lead user automatically to registration as a secure pathway
-    setCurrentPage('register');
+    if (activeUser) {
+      if (activeUser.role === 'admin') {
+        setCurrentPage('admin');
+      } else {
+        setActiveDashboardTab('properties');
+        setCurrentPage('dashboard');
+        setTimeout(() => {
+          const el = document.getElementById(`property-card-${project.id}`);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+      }
+    } else {
+      // Lead user automatically to registration as a secure pathway
+      setCurrentPage('register');
+    }
   };
 
   const getSimulatedTimeString = () => {
@@ -1120,6 +1182,7 @@ export default function App() {
         <LandingPage 
           onNavigate={handlePageNavigation} 
           onSelectProject={handleSelectProjectFromLanding}
+          activeUser={activeUser}
         />
       )}
 
@@ -1131,12 +1194,14 @@ export default function App() {
           usersList={usersListState}
           addSystemLog={addSystemLog}
           authReason={authReason}
+          onRegisterPending={handleRegisterPending}
         />
       )}
 
       {currentPage === 'dashboard' && activeUser && (
         <UserDashboard 
           activeUser={activeUser}
+          usersList={usersListState}
           projects={projectsList}
           transactions={transactionsList.filter(t => t.userId === activeUser.id || t.userEmail?.toLowerCase() === activeUser.email.toLowerCase())}
           investments={investmentsList.filter(i => i.userId === activeUser.id || i.userEmail?.toLowerCase() === activeUser.email.toLowerCase())}
@@ -1157,6 +1222,7 @@ export default function App() {
           isTimeSimulated={isTimeSimulated}
           activeTab={activeDashboardTab}
           setActiveTab={setActiveDashboardTab}
+          systemSettings={systemSettings}
         />
       )}
 
@@ -1178,6 +1244,8 @@ export default function App() {
           onUnbindUserWallet={handleUnbindUserWallet}
           onUpdateProject={handleUpdateProject}
           onDeleteProject={handleDeleteProject}
+          systemSettings={systemSettings}
+          onUpdateSystemSettings={handleUpdateSystemSettings}
         />
       )}
     </MobileShell>

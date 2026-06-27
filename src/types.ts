@@ -264,3 +264,14 @@ export function getAvatarBgClass(avatarId: string | undefined): string {
   if (avatarId === 'tier-4' || avatarId === 'gradient-6') return 'bg-gradient-to-tr from-slate-700 via-slate-800 to-slate-950 text-white border border-sky-400/50';
   return 'bg-gradient-to-tr from-emerald-400 to-teal-600 text-slate-950'; // default fallback
 }
+
+export interface SystemSettings {
+  id: string; // usually 'default'
+  usdtTrc20Address: string;
+  usdtBep20Address: string;
+  scanGateTitle: string;
+  scanGateSubtitle: string;
+  usdtTrc20QrCode?: string;
+  usdtBep20QrCode?: string;
+}
+
