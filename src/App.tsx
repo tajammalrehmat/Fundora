@@ -1183,6 +1183,8 @@ export default function App() {
           onNavigate={handlePageNavigation} 
           onSelectProject={handleSelectProjectFromLanding}
           activeUser={activeUser}
+          allTransactions={transactionsList}
+          allClaims={claimsHistory}
         />
       )}
 

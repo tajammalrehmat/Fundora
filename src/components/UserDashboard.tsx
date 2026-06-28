@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, getAvatarBgClass, getInvestorTier, SystemSettings } from '../types';
+import { generateReceiptPDF } from '../utils/pdfReceipt';
 import { 
   TrendingUp, Wallet, ArrowDownCircle, ArrowUpCircle, Users, Percent, Gift, Clock,
   Building, MapPin, Search, Filter, ShieldCheck, ChevronRight, Calculator, CheckCircle2,
@@ -80,6 +81,7 @@ export default function UserDashboard({
   const setActiveTab = externalSetActiveTab !== undefined ? externalSetActiveTab : setInternalActiveTab;
 
   const [confirmLiquidateId, setConfirmLiquidateId] = useState<string | null>(null);
+  const [activeReceipt, setActiveReceipt] = useState<{ item: any; type: 'transaction' | 'claim' } | null>(null);
 
   // Custom Inline notifications status
   const [dashboardStatus, setDashboardStatus] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -1904,15 +1906,18 @@ export default function UserDashboard({
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[9px] font-bold text-center">
                       <th className="p-3 text-left">Date</th>
+                      <th className="p-3 text-left">Transaction ID</th>
                       <th className="p-3 text-left">Type</th>
                       <th className="p-3">Amount</th>
                       <th className="p-3">Status</th>
+                      <th className="p-3">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-center">
                     {transactions.map((tx) => (
-                      <tr key={tx.id} className="hover:bg-slate-550/30 text-slate-700">
+                      <tr key={tx.id} className="hover:bg-slate-50 text-slate-700">
                         <td className="p-3 text-left text-slate-400 text-[9px] whitespace-nowrap">{tx.date}</td>
+                        <td className="p-3 text-left font-mono text-[9px] text-slate-500 select-all">{tx.id}</td>
                         <td className="p-3 text-left text-slate-800 font-sans font-bold">{tx.type}</td>
                         <td className="p-3 font-bold text-slate-700">${tx.amount.toFixed(2)}</td>
                         <td className="p-3">
@@ -1925,6 +1930,16 @@ export default function UserDashboard({
                           }`}>
                             {tx.status}
                           </span>
+                        </td>
+                        <td className="p-3">
+                          <button
+                            type="button"
+                            onClick={() => setActiveReceipt({ item: tx, type: 'transaction' })}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 rounded text-[9px] font-bold uppercase cursor-pointer transition-all"
+                          >
+                            <FileText className="w-3 h-3 text-slate-500" />
+                            <span>Receipt</span>
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -2069,14 +2084,17 @@ export default function UserDashboard({
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[8px] font-bold text-center">
                       <th className="p-3 text-left">Date Grid</th>
+                      <th className="p-3 text-left">Settlement ID</th>
                       <th className="p-3">Yield Amount</th>
                       <th className="p-3">Settlement Check</th>
+                      <th className="p-3">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-center text-slate-705">
                     {claimsHistory.map((cl) => (
                       <tr key={cl.id} className="hover:bg-slate-50/50">
                         <td className="p-3 text-left text-[9px] text-slate-450">{cl.date}</td>
+                        <td className="p-3 text-left font-mono text-[9px] text-slate-500 select-all">{cl.id}</td>
                         <td className="p-3 font-semibold text-slate-800">${cl.amount.toFixed(2)}</td>
                         <td className="p-3">
                           <span className={`px-2 py-0.5 rounded text-[8px] tracking-wide font-extrabold uppercase ${
@@ -2087,11 +2105,21 @@ export default function UserDashboard({
                             {cl.status}
                           </span>
                         </td>
+                        <td className="p-3">
+                          <button
+                            type="button"
+                            onClick={() => setActiveReceipt({ item: cl, type: 'claim' })}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 rounded text-[9px] font-bold uppercase cursor-pointer transition-all"
+                          >
+                            <FileText className="w-3 h-3 text-slate-500" />
+                            <span>Receipt</span>
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {claimsHistory.length === 0 && (
                       <tr>
-                        <td colSpan={3} className="p-5 text-center text-slate-400 font-sans">
+                        <td colSpan={5} className="p-5 text-center text-slate-400 font-sans">
                           No previous missed claims recorded for this cycle. All verified settlements running green.
                         </td>
                       </tr>
@@ -2947,6 +2975,131 @@ export default function UserDashboard({
               </div>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Receipt View Modal */}
+      {activeReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setActiveReceipt(null)}></div>
+          <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 animate-in fade-in zoom-in-95 duration-200 font-mono text-xs z-10 my-8">
+            
+            {/* Header branding */}
+            <div className="bg-slate-900 text-white p-6 relative">
+              <button 
+                type="button"
+                onClick={() => setActiveReceipt(null)} 
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <span className="text-[10px] text-emerald-400 font-bold tracking-widest block mb-1">✓ SECURE DIGITAL LEDGER RECORD</span>
+              <h3 className="text-lg font-black tracking-tight text-white font-sans">INVESTYA REAL ESTATE</h3>
+              <p className="text-[9px] text-slate-400 font-mono mt-0.5">PLATFORM CLEARANCE PROTOCOL & RECEIPT</p>
+            </div>
+
+            {/* Receipt body */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <span className="text-slate-400 text-[9px] uppercase font-bold block">Document Type</span>
+                  <span className="text-slate-900 font-bold font-sans text-sm">Official Transaction Voucher</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 text-[9px] uppercase font-bold block">Status</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] tracking-wide font-extrabold uppercase ${
+                    activeReceipt.item.status === 'Approved' || activeReceipt.item.status === 'Completed' || activeReceipt.item.status === 'Claimed'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : activeReceipt.item.status === 'Pending'
+                        ? 'bg-amber-100 text-amber-800 animate-pulse'
+                        : 'bg-rose-100 text-rose-800'
+                  }`}>
+                    {activeReceipt.item.status || 'Verified'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Grid details */}
+              <div className="bg-slate-50 border border-slate-150 rounded-xl p-4 space-y-3">
+                <div className="flex justify-between items-center text-slate-500 gap-2">
+                  <span className="font-bold shrink-0">Record ID:</span>
+                  <span className="text-slate-900 font-bold break-all font-mono select-all text-right">{activeReceipt.item.id}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-500 gap-2">
+                  <span className="font-bold shrink-0">Account User:</span>
+                  <span className="text-slate-900 font-semibold text-right truncate">{activeReceipt.item.userEmail || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-500 gap-2">
+                  <span className="font-bold shrink-0">Registry Type:</span>
+                  <span className="text-slate-900 font-sans font-bold text-right">{activeReceipt.type === 'transaction' ? activeReceipt.item.type : 'Daily Yield Claim'}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-500 gap-2">
+                  <span className="font-bold shrink-0">Ledger Amount:</span>
+                  <span className="text-emerald-600 font-black text-sm text-right">${Number(activeReceipt.item.amount).toFixed(2)} USDT</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-500 gap-2">
+                  <span className="font-bold shrink-0">Timestamp:</span>
+                  <span className="text-slate-900 text-right">{activeReceipt.item.date} {activeReceipt.item.claimedAt ? `(${activeReceipt.item.claimedAt})` : ''}</span>
+                </div>
+                
+                {activeReceipt.type === 'transaction' && activeReceipt.item.network && (
+                  <div className="flex justify-between items-center text-slate-500 gap-2">
+                    <span className="font-bold shrink-0">Network Chain:</span>
+                    <span className="text-slate-900 font-bold text-right">{activeReceipt.item.network} Protocol</span>
+                  </div>
+                )}
+                {activeReceipt.type === 'transaction' && activeReceipt.item.walletAddress && (
+                  <div className="flex justify-between items-start text-slate-500 gap-2">
+                    <span className="font-bold shrink-0">Wallet Destination:</span>
+                    <span className="text-slate-900 font-mono text-[9px] select-all break-all text-right max-w-[200px]">{activeReceipt.item.walletAddress}</span>
+                  </div>
+                )}
+                {activeReceipt.type === 'transaction' && activeReceipt.item.txHash && (
+                  <div className="flex justify-between items-start text-slate-500 border-t border-slate-200/50 pt-2.5 gap-2">
+                    <span className="font-bold shrink-0">Cryptographic Hash:</span>
+                    <span className="text-slate-900 font-mono text-[8px] select-all break-all text-right max-w-[200px]">{activeReceipt.item.txHash}</span>
+                  </div>
+                )}
+                
+                {activeReceipt.item.description && (
+                  <div className="flex flex-col text-slate-500 border-t border-slate-200/50 pt-2.5 gap-1 text-left">
+                    <span className="font-bold">Clearing Description:</span>
+                    <span className="text-slate-600 font-sans italic text-[11px] leading-relaxed">{activeReceipt.item.description}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Extra visual stamps */}
+              <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 flex items-center gap-3">
+                <div className="w-10 h-10 border-2 border-dashed border-slate-400 rounded-full flex items-center justify-center text-slate-500 text-[8px] font-bold shrink-0">
+                  SEAL
+                </div>
+                <p className="text-[9px] text-slate-500 font-sans leading-tight">
+                  This transaction is fully secured on the Investya decentralized registry pipeline. Verify compliance using the Transaction Tracker on the main landing homepage.
+                </p>
+              </div>
+
+              {/* Footer action buttons */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => generateReceiptPDF(activeReceipt.item, activeReceipt.type)}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/10 active:scale-[0.98]"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Download PDF Receipt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveReceipt(null)}
+                  className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider transition-all cursor-pointer border border-slate-200"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            
           </div>
         </div>
       )}
