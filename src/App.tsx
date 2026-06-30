@@ -88,6 +88,7 @@ export default function App() {
   const activeDashboardTabRef = useRef(activeDashboardTab);
   const activeAdminTabRef = useRef(activeAdminTab);
   const authReasonRef = useRef(authReason);
+  const isAutoCheckingRef = useRef(false);
 
   useEffect(() => { activeUserRef.current = activeUser; }, [activeUser]);
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
@@ -474,6 +475,46 @@ export default function App() {
 
     initializeFirebaseData();
   }, []);
+
+  // Automated background daily rollover check
+  useEffect(() => {
+    if (!isFirebaseSynced) return;
+
+    const runAutoCheck = async () => {
+      if (isAutoCheckingRef.current) return;
+      isAutoCheckingRef.current = true;
+      try {
+        const secureNow = await getSecureServerTime();
+        const todayStr = secureNow.toISOString().slice(0, 10);
+        const lastRolloverDate = localStorage.getItem('inv_last_rollover_date');
+
+        console.log('[Auto-Rollover] Secure Date Check:', { todayStr, lastRolloverDate });
+
+        if (!lastRolloverDate) {
+          // Initialize last_rollover_date on fresh database load so we don't double trigger immediately on first install
+          localStorage.setItem('inv_last_rollover_date', todayStr);
+          console.log('[Auto-Rollover] Initialized last rollover date to today:', todayStr);
+        } else if (lastRolloverDate !== todayStr) {
+          // Date has changed to a new day! Trigger automatic rollover
+          console.log('[Auto-Rollover] Date mismatch detected. Triggering automated daily payout / rollover...');
+          handleSimulateDailyRollover();
+          localStorage.setItem('inv_last_rollover_date', todayStr);
+          addSystemLog('Admin_Action', `Automated Daily Settlement Rollover executed: Yield and portfolio states updated for the new UTC day (${todayStr}).`, 'Secure');
+        }
+      } catch (err) {
+        console.error('[Auto-Rollover] Error during automated rollover check:', err);
+      } finally {
+        isAutoCheckingRef.current = false;
+      }
+    };
+
+    // Run check immediately on mount/sync
+    runAutoCheck();
+
+    // Re-check every 5 minutes to catch day transitions while the app is open
+    const interval = setInterval(runAutoCheck, 300000);
+    return () => clearInterval(interval);
+  }, [isFirebaseSynced, investmentsList, usersListState, claimsHistory, activeUser]);
 
   // Clean up and migrate old Pakistani/South Asian cached values to UAE and UK defaults on startup
   useEffect(() => {
@@ -1234,27 +1275,47 @@ export default function App() {
 
   // Simulated Daily/Monthly Rollover (Admin function)
   const handleSimulateDailyRollover = () => {
-    // 1. Accrue daily yield for everyone
-    // 2. If current time settings were NOT hour 21 (9-10 PM GMT) or user didn't claim: record missed claim!
-    const dailyProfitSum = investmentsList.reduce((sum, inv) => {
-      const isActive = inv.status === 'Active' || inv.status === undefined;
-      return isActive ? sum + inv.dailyProfitRate : sum;
-    }, 0);
-
+    // 1. Calculate yesterday's date string
     const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const newMissedRecords: ProfitClaimRecord[] = [];
 
-    const missedRecord: ProfitClaimRecord = {
-      id: `claim-miss-${Date.now()}`,
-      date: yesterdayStr,
-      amount: dailyProfitSum > 0 ? dailyProfitSum : 2.50,
-      status: 'Missed'
-    };
+    // 2. Identify all users who had active investments yesterday but missed claiming their yield
+    usersListState.forEach(user => {
+      const userInvestments = investmentsList.filter(inv => inv.userId === user.id || inv.userEmail?.toLowerCase() === user.email.toLowerCase());
+      const dailyProfitSum = userInvestments.reduce((sum, inv) => {
+        const isActive = inv.status === 'Active' || inv.status === undefined;
+        return isActive ? sum + inv.dailyProfitRate : sum;
+      }, 0);
 
-    setClaimsHistory(prev => [missedRecord, ...prev]);
+      if (dailyProfitSum > 0) {
+        // Check if user already claimed yesterday
+        const hasClaimed = claimsHistory.some(c => 
+          (c.userId === user.id || c.userEmail?.toLowerCase() === user.email.toLowerCase()) &&
+          c.date === yesterdayStr && 
+          c.status === 'Claimed'
+        );
 
-    // Plan duration decrement by 1 month for each daily simulation run
+        if (!hasClaimed) {
+          newMissedRecords.push({
+            id: `claim-miss-${user.id}-${Date.now()}`,
+            userId: user.id,
+            userEmail: user.email,
+            date: yesterdayStr,
+            amount: dailyProfitSum,
+            status: 'Missed'
+          });
+        }
+      }
+    });
+
+    if (newMissedRecords.length > 0) {
+      setClaimsHistory(prev => [...newMissedRecords, ...prev]);
+    }
+
+    // 3. Decrement plan durations (remainingMonths) for active investments, handling maturities
     let totalMaturedPrincipal = 0;
-    const maturedPropertyNames: string[] = [];
+    const maturedRefundTransactions: Transaction[] = [];
+    const refundsByUserEmail: Record<string, number> = {};
 
     const updatedInvestments = investmentsList.map(inv => {
       const isActive = inv.status === 'Active' || inv.status === undefined;
@@ -1262,8 +1323,22 @@ export default function App() {
         const currentRemaining = inv.remainingMonths !== undefined ? inv.remainingMonths : (inv.durationMonths || 12);
         const newRemaining = Math.max(0, currentRemaining - 1);
         if (newRemaining === 0) {
+          // Investment matured! Refund full principal cost
           totalMaturedPrincipal += inv.totalCost;
-          maturedPropertyNames.push(inv.projectName);
+          const emailClean = (inv.userEmail || '').toLowerCase();
+          refundsByUserEmail[emailClean] = (refundsByUserEmail[emailClean] || 0) + inv.totalCost;
+
+          maturedRefundTransactions.push({
+            id: `tx-matured-refund-${inv.id}-${Date.now()}`,
+            userId: inv.userId || '',
+            userEmail: inv.userEmail || '',
+            type: 'Deposit',
+            amount: inv.totalCost,
+            date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+            status: 'Completed',
+            description: `Principal returned automatically upon maturity for: ${inv.projectName}`
+          });
+
           return {
             ...inv,
             remainingMonths: 0,
@@ -1281,32 +1356,42 @@ export default function App() {
 
     setInvestmentsList(updatedInvestments);
 
-    // If active user has matured investments, automatically return principal to their main account balance
-    if (totalMaturedPrincipal > 0 && activeUser) {
-      const updatedUser = {
-        ...activeUser,
-        balance: Math.round((activeUser.balance + totalMaturedPrincipal) * 100) / 100,
-        totalInvestment: Math.max(0, Math.round((activeUser.totalInvestment - totalMaturedPrincipal) * 100) / 100)
-      };
+    // 4. Return matured principal to the respective users' balances
+    if (maturedRefundTransactions.length > 0) {
+      setUsersListState(prev => prev.map(u => {
+        const refundAmount = refundsByUserEmail[u.email.toLowerCase()];
+        if (refundAmount) {
+          const updatedBal = Math.round((u.balance + refundAmount) * 100) / 100;
+          const updatedTotalInv = Math.max(0, Math.round((u.totalInvestment - refundAmount) * 100) / 100);
+          return {
+            ...u,
+            balance: updatedBal,
+            totalInvestment: updatedTotalInv
+          };
+        }
+        return u;
+      }));
 
-      const refundTx: Transaction = {
-        id: `tx-matured-refund-${Date.now()}`,
-        userId: activeUser.id,
-        userEmail: activeUser.email,
-        type: 'Deposit',
-        amount: totalMaturedPrincipal,
-        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        status: 'Completed',
-        description: `Principal returned automatically upon maturity for: ${maturedPropertyNames.join(', ')}`
-      };
+      // Update activeUser if they received a refund
+      if (activeUser) {
+        const refundAmount = refundsByUserEmail[activeUser.email.toLowerCase()];
+        if (refundAmount) {
+          const updatedActiveUser = {
+            ...activeUser,
+            balance: Math.round((activeUser.balance + refundAmount) * 100) / 100,
+            totalInvestment: Math.max(0, Math.round((activeUser.totalInvestment - refundAmount) * 100) / 100)
+          };
+          setActiveUser(updatedActiveUser);
+        }
+      }
 
-      setActiveUser(updatedUser);
-      setUsersListState(prev => prev.map(u => u.email === updatedUser.email ? updatedUser : u));
-      setTransactionsList(prev => [refundTx, ...prev]);
+      setTransactionsList(prev => [...maturedRefundTransactions, ...prev]);
 
-      addSystemLog('Admin_Action', `Automatic principal maturity payout completed: $${totalMaturedPrincipal.toFixed(2)} credited to ${activeUser.email} balance.`, 'Secure');
+      maturedRefundTransactions.forEach(tx => {
+        addSystemLog('Admin_Action', `Automatic principal maturity payout completed: $${tx.amount.toFixed(2)} credited to ${tx.userEmail} balance.`, 'Secure');
+      });
     } else {
-      addSystemLog('Anti_Fraud_Trigger', `Timed Settlement Rollover ran: Recorded missed claims for uncollected portfolio queues.`, 'Secure');
+      addSystemLog('Anti_Fraud_Trigger', `Daily Settlement Rollover executed: Recorded missed claims for uncollected portfolio queues.`, 'Secure');
     }
   };
 

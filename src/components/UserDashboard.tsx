@@ -9,7 +9,7 @@ import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitCl
 import { generateReceiptPDF, generateDocumentPDF } from '../utils/pdfReceipt';
 import { 
   TrendingUp, Wallet, ArrowDownCircle, ArrowUpCircle, Users, Percent, Gift, Clock,
-  Building, MapPin, Search, Filter, ShieldCheck, ChevronRight, Calculator, CheckCircle2,
+  Building, MapPin, Search, Filter, ShieldCheck, ChevronRight, ChevronLeft, Calculator, CheckCircle2,
   AlertTriangle, Copy, Trash, Upload, Landmark, Sparkles, RefreshCw, X, ChevronDown, Award,
   FileText, Plus, User, Lock, Check, Crown, Shield, Download, Printer, ZoomIn, ZoomOut, Eye
 } from 'lucide-react';
@@ -101,6 +101,11 @@ export default function UserDashboard({
   // Investment Calculator Drawer / modal state
   const [selectedProjectForCalc, setSelectedProjectForCalc] = useState<RealEstateProject | null>(null);
   const [calculatorShares, setCalculatorShares] = useState<number>(1);
+  const [calcError, setCalcError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    setCalcError(null);
+  }, [selectedProjectForCalc, calculatorShares]);
 
   // PDF Viewer Modal States
   const [activeViewDoc, setActiveViewDoc] = useState<{ docName: string; project: RealEstateProject } | null>(null);
@@ -199,10 +204,36 @@ export default function UserDashboard({
     return investments.reduce((sum, inv) => sum + inv.totalCost, 0);
   }, [investments]);
 
+  // Detailed status-based investment breakdowns
+  const activeInvestments = useMemo(() => {
+    return investments.filter(inv => inv.status !== 'Completed' && inv.status !== 'Liquidated');
+  }, [investments]);
+
+  const activeTotalInvest = useMemo(() => {
+    return activeInvestments.reduce((sum, inv) => sum + inv.totalCost, 0);
+  }, [activeInvestments]);
+
+  const maturedInvestments = useMemo(() => {
+    return investments.filter(inv => inv.status === 'Completed');
+  }, [investments]);
+
+  const maturedTotalInvest = useMemo(() => {
+    return maturedInvestments.reduce((sum, inv) => sum + inv.totalCost, 0);
+  }, [maturedInvestments]);
+
+  const liquidatedInvestments = useMemo(() => {
+    return investments.filter(inv => inv.status === 'Liquidated');
+  }, [investments]);
+
+  const liquidatedTotalInvest = useMemo(() => {
+    return liquidatedInvestments.reduce((sum, inv) => sum + inv.totalCost, 0);
+  }, [liquidatedInvestments]);
+
   // 2. Daily Profit (Accumulated from active investments based on ROI percentage scaled to 1 day)
   const calculatedDailyProfit = useMemo(() => {
     return investments.reduce((sum, inv) => {
-      return sum + inv.dailyProfitRate;
+      const isActive = inv.status !== 'Completed' && inv.status !== 'Liquidated';
+      return isActive ? sum + inv.dailyProfitRate : sum;
     }, 0);
   }, [investments]);
 
@@ -229,6 +260,11 @@ export default function UserDashboard({
 
   // 6. Available Balance (from user profile)
   const availableUserBalance = activeUser.balance;
+
+  // 6.5. Check if user has already invested in any project (including totalInvestment metric)
+  const hasAlreadyInvested = useMemo(() => {
+    return activeUser.totalInvestment > 0 || (investments && investments.some(inv => inv.userId === activeUser.id));
+  }, [activeUser.totalInvestment, investments, activeUser.id]);
 
   // 7. Missed Claims
   const missedClaimsCount = useMemo(() => {
@@ -511,11 +547,21 @@ export default function UserDashboard({
 
   const handleCalculatorPurchase = () => {
     if (!selectedProjectForCalc) return;
+    
+    // Check for insufficient balance
+    if (availableUserBalance < calculatorCost) {
+      const neededAmount = (calculatorCost - availableUserBalance).toFixed(2);
+      setCalcError(`Insufficient Balance: You need $${calculatorCost.toFixed(2)} USDT but your wallet balance is only $${availableUserBalance.toFixed(2)} USDT (Short of $${neededAmount} USDT).`);
+      showStatus("Insufficient Balance! Please deposit USDT to complete your purchase.", "error");
+      return;
+    }
+
     const res = onPurchaseShares(selectedProjectForCalc.id, calculatorShares);
     if (res.success) {
       showStatus(`Purchase Success! Acquired co-ownership shares of ${selectedProjectForCalc.name}. Check your active holdings in Overview.`, "success");
       setSelectedProjectForCalc(null);
     } else {
+      setCalcError(`Share Purchase Rejected: ${res.error}`);
       showStatus(`Share Purchase Rejected: ${res.error}`, "error");
     }
   };
@@ -800,23 +846,25 @@ export default function UserDashboard({
         {activeTab === 'overview' && (
           <div className="space-y-6">
 
-            {/* Welcome banner */}
-            <div className="bg-[#0f172a] text-white p-5 rounded-[1.25rem] border border-slate-850 flex justify-between items-center relative overflow-hidden shadow-md">
-              <div className="relative z-10">
-                <h3 className="font-bold text-sm text-white flex items-center gap-1.5">
-                  Welcome to Fundora Portal 
-                  <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-                </h3>
-                <p className="text-[10px] text-slate-300 leading-normal max-w-sm mt-1">
-                  Leverage co-ownership and watch your fractional shares build value. Bind your TRC20/BEP20 cryptographic keys below to initialize wire transfers.
-                </p>
+            {/* Welcome banner (Only shown when wallet addresses are not yet configured) */}
+            {(!activeUser.wallet.usdtTrc20Address && !activeUser.wallet.usdtBep20Address) && (
+              <div className="bg-[#0f172a] text-white p-5 rounded-[1.25rem] border border-slate-850 flex justify-between items-center relative overflow-hidden shadow-md">
+                <div className="relative z-10">
+                  <h3 className="font-bold text-sm text-white flex items-center gap-1.5">
+                    Welcome to Fundora Portal 
+                    <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
+                  </h3>
+                  <p className="text-[10px] text-slate-300 leading-normal max-w-sm mt-1">
+                    Leverage co-ownership and watch your fractional shares build value. Bind your TRC20/BEP20 cryptographic keys below to initialize wire transfers.
+                  </p>
+                </div>
+                <div className="text-right shrink-0 relative z-10 font-mono">
+                  <span className="text-[9px] text-slate-400 uppercase block">My Code</span>
+                  <span className="text-xs font-bold text-amber-400 tracking-wider">{activeUser.referralCode}</span>
+                </div>
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
               </div>
-              <div className="text-right shrink-0 relative z-10 font-mono">
-                <span className="text-[9px] text-slate-400 uppercase block">My Code</span>
-                <span className="text-xs font-bold text-amber-400 tracking-wider">{activeUser.referralCode}</span>
-              </div>
-              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
-            </div>
+            )}
 
             {/* Quick action bindings */}
             {(!activeUser.wallet.usdtTrc20Address && !activeUser.wallet.usdtBep20Address) && (
@@ -917,27 +965,96 @@ export default function UserDashboard({
                     </div>
                   </div>
 
-                  {/* 2. Total Investment */}
-                  <div id="card-total-investment" className="bg-gradient-to-br from-slate-900 via-[#0f152d] to-slate-950 text-white border border-indigo-500/25 rounded-2xl p-5 hover:border-indigo-400/50 hover:shadow-lg hover:shadow-indigo-950/25 transition-all duration-300 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full blur-2xl pointer-events-none group-hover:scale-110 transition-transform duration-500"></div>
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-[11px] text-indigo-400 font-bold font-mono uppercase tracking-widest block">Total Real Estate Investment</span>
-                      <div className="p-1.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
-                        <Landmark className="w-4 h-4 text-indigo-400" />
+                  {/* 2. Total Real Estate Investment Card with Active / Terminated / Matured breakdown */}
+                  <div id="card-total-investment" className="bg-gradient-to-br from-[#0c0e1e] via-[#12163b] to-[#0a0c1a] text-white border border-indigo-500/30 rounded-2xl p-5 hover:border-indigo-400/60 hover:shadow-xl hover:shadow-indigo-950/35 transition-all duration-300 relative overflow-hidden group flex flex-col justify-between">
+                    {/* Glowing highlight in background */}
+                    <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-indigo-500/15 via-purple-500/5 to-transparent rounded-full blur-2xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
+                    
+                    <div>
+                      {/* Title & Icon row */}
+                      <div className="flex justify-between items-center mb-4">
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] text-indigo-400 font-extrabold font-mono uppercase tracking-widest block">
+                            Asset Valuation
+                          </span>
+                          <h5 className="text-[11px] font-sans font-bold text-slate-300 tracking-tight">
+                            Total Real Estate Investment
+                          </h5>
+                        </div>
+                        <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 shadow-inner group-hover:bg-indigo-500/15 group-hover:border-indigo-500/30 transition-all duration-300">
+                          <Landmark className="w-4.5 h-4.5 text-indigo-400 animate-pulse" />
+                        </div>
+                      </div>
+
+                      {/* Value row */}
+                      <div className="space-y-3 relative z-10">
+                        <div className="flex items-baseline gap-x-2">
+                          <span className="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-indigo-200 tracking-tight font-sans">
+                            ${activeTotalInvest.toFixed(2)}
+                          </span>
+                          <span className="text-[9px] font-mono font-black text-indigo-300 bg-indigo-500/20 border border-indigo-500/30 px-1.5 py-0.5 rounded tracking-widest uppercase">
+                            Active USD
+                          </span>
+                        </div>
+
+                        {/* Interactive secondary tags & Badges */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <span className="text-[9px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full font-bold flex items-center gap-1.5 shadow-sm">
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                            </span>
+                            <FileText className="w-3 h-3 text-emerald-400" />
+                            {activeInvestments.length} {activeInvestments.length === 1 ? 'Active Contract' : 'Active Contracts'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Detailed Status Breakdown Grid */}
+                      <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-indigo-500/15 relative z-10 font-mono">
+                        <div className="text-center bg-emerald-500/5 rounded-xl p-2 border border-emerald-500/10">
+                          <span className="block text-[8px] text-emerald-400 font-bold uppercase tracking-wider">
+                            Active
+                          </span>
+                          <span className="block text-sm font-extrabold text-emerald-300 mt-0.5">
+                            {activeInvestments.length}
+                          </span>
+                          <span className="block text-[8px] text-slate-400 mt-0.5">
+                            ${activeTotalInvest.toFixed(0)}
+                          </span>
+                        </div>
+
+                        <div className="text-center bg-sky-500/5 rounded-xl p-2 border border-sky-500/10">
+                          <span className="block text-[8px] text-sky-400 font-bold uppercase tracking-wider">
+                            Matured
+                          </span>
+                          <span className="block text-sm font-extrabold text-sky-300 mt-0.5">
+                            {maturedInvestments.length}
+                          </span>
+                          <span className="block text-[8px] text-slate-400 mt-0.5">
+                            ${maturedTotalInvest.toFixed(0)}
+                          </span>
+                        </div>
+
+                        <div className="text-center bg-rose-500/5 rounded-xl p-2 border border-rose-500/10">
+                          <span className="block text-[8px] text-rose-400 font-bold uppercase tracking-wider">
+                            Terminated
+                          </span>
+                          <span className="block text-sm font-extrabold text-rose-300 mt-0.5">
+                            {liquidatedInvestments.length}
+                          </span>
+                          <span className="block text-[8px] text-slate-400 mt-0.5">
+                            ${liquidatedTotalInvest.toFixed(0)}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                    <div className="space-y-2 relative z-10">
-                      <div className="flex items-baseline gap-x-1.5">
-                        <span className="text-2xl sm:text-3xl font-black text-indigo-100 font-mono tracking-tight">${calculatedTotalInvest.toFixed(2)}</span>
-                        <span className="text-xs text-indigo-400 font-mono font-bold">USD</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <p className="text-[10px] sm:text-xs text-slate-400 font-sans leading-relaxed">
-                          Active fractional real-estate shares generating passive daily dividends.
-                        </p>
-                        <span className="shrink-0 text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg ml-2 font-bold flex items-center gap-1">
-                          📋 {investments.length} Receipts
-                        </span>
+
+                    {/* Description Footer area */}
+                    <div className="border-t border-indigo-500/15 pt-3 mt-4 relative z-10">
+                      <div className="flex justify-between items-center text-[10px] text-slate-400 leading-normal font-sans">
+                        <span>Cumulative Invested:</span>
+                        <span className="font-mono font-bold text-slate-300">${calculatedTotalInvest.toFixed(2)} USD</span>
                       </div>
                     </div>
                   </div>
@@ -955,63 +1072,63 @@ export default function UserDashboard({
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
                   {/* 3. Daily Profit */}
-                  <div id="card-daily-profit" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-emerald-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-daily-profit" className="bg-gradient-to-br from-[#091811] via-[#0d2a1b] to-[#040c08] text-white border border-emerald-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-emerald-400/50 hover:shadow-lg hover:shadow-emerald-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Daily Profit Avg</span>
-                      <div className="p-1.5 bg-emerald-50 rounded-lg border border-emerald-100 flex items-center relative">
-                        <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
-                        <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-[10px] text-emerald-400 uppercase font-mono font-bold tracking-wider block">Daily Profit Avg</span>
+                      <div className="p-1.5 bg-emerald-500/10 rounded-lg border border-emerald-500/20 flex items-center relative">
+                        <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></div>
+                        <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-emerald-600 font-mono tracking-tight">+${calculatedDailyProfit.toFixed(2)}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Credited daily 4-5PM & 9-10PM</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-emerald-300 font-mono tracking-tight">+${calculatedDailyProfit.toFixed(2)}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">Credited daily 4-5PM & 9-10PM GMT</span>
                     </div>
                   </div>
 
                   {/* 4. Total Profit Earned */}
-                  <div id="card-total-profit" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-indigo-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-total-profit" className="bg-gradient-to-br from-[#0c0e1e] via-[#14193b] to-[#060814] text-white border border-indigo-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-indigo-400/50 hover:shadow-lg hover:shadow-indigo-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Profit</span>
-                      <div className="p-1.5 bg-indigo-50 rounded-lg border border-indigo-100">
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                      <span className="text-[10px] text-indigo-400 uppercase font-mono font-bold tracking-wider block">Total Profit</span>
+                      <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${totalProfitEarnedAmount.toFixed(2)}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Collected into Balance</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-slate-100 font-mono tracking-tight">${totalProfitEarnedAmount.toFixed(2)}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">Collected into Balance</span>
                     </div>
                   </div>
 
                   {/* 5. Active Assets */}
-                  <div id="card-active-projects" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-blue-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-active-projects" className="bg-gradient-to-br from-[#08152b] via-[#0d2244] to-[#040a17] text-white border border-blue-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-blue-400/50 hover:shadow-lg hover:shadow-blue-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Active Assets</span>
-                      <div className="p-1.5 bg-blue-50 rounded-lg border border-blue-100">
-                        <Building className="w-3.5 h-3.5 text-blue-500" />
+                      <span className="text-[10px] text-blue-400 uppercase font-mono font-bold tracking-wider block">Active Assets</span>
+                      <div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                        <Building className="w-3.5 h-3.5 text-blue-400" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">{activeProjectsCount} Locations</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Fractional Properties</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-slate-100 font-mono tracking-tight">{activeProjectsCount} Locations</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">Fractional Properties</span>
                     </div>
                   </div>
 
                   {/* 6. Missed Claims */}
-                  <div id="card-missed-claims" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-rose-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-rose-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-missed-claims" className="bg-gradient-to-br from-[#210c12] via-[#331119] to-[#120509] text-white border border-rose-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-rose-400/50 hover:shadow-lg hover:shadow-rose-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-rose-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Missed Claims</span>
-                      <div className="p-1.5 bg-rose-50 rounded-lg border border-rose-100">
-                        <Clock className="w-3.5 h-3.5 text-rose-500" />
+                      <span className="text-[10px] text-rose-400 uppercase font-mono font-bold tracking-wider block">Missed Claims</span>
+                      <div className="p-1.5 bg-rose-500/10 rounded-lg border border-rose-500/20">
+                        <Clock className="w-3.5 h-3.5 text-rose-400 animate-spin" style={{ animationDuration: '6s' }} />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-rose-600 font-mono tracking-tight">{missedClaimsCount} {missedClaimsCount === 1 ? 'Claim' : 'Claims'}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-rose-400 font-mono block whitespace-normal leading-tight">
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-rose-400 font-mono tracking-tight">{missedClaimsCount} {missedClaimsCount === 1 ? 'Claim' : 'Claims'}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-rose-400 font-mono block whitespace-normal leading-snug">
                         {missedClaimsCount === 0 ? "No unclaimed dividends" : "Missed daily claim windows"}
                       </span>
                     </div>
@@ -1030,62 +1147,62 @@ export default function UserDashboard({
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
                   {/* 7. Total Deposits */}
-                  <div id="card-total-deposits" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-slate-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-slate-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-total-deposits" className="bg-gradient-to-br from-[#1b1209] via-[#2a1d0f] to-[#0c0804] text-white border border-amber-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-amber-400/50 hover:shadow-lg hover:shadow-amber-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-amber-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Deposits</span>
-                      <div className="p-1.5 bg-slate-50 rounded-lg border border-slate-200">
-                        <ArrowDownCircle className="w-3.5 h-3.5 text-slate-600" />
+                      <span className="text-[10px] text-amber-400 uppercase font-mono font-bold tracking-wider block">Total Deposits</span>
+                      <div className="p-1.5 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                        <ArrowDownCircle className="w-3.5 h-3.5 text-amber-400" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${activeUser.totalDeposited.toFixed(2)}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">USD Equivalents</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-slate-100 font-mono tracking-tight">${activeUser.totalDeposited.toFixed(2)}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">USD Equivalents</span>
                     </div>
                   </div>
 
                   {/* 8. Total Withdrawals */}
-                  <div id="card-total-withdrawals" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-rose-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-rose-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-total-withdrawals" className="bg-gradient-to-br from-[#1c0d0d] via-[#2c1313] to-[#0e0606] text-white border border-rose-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-rose-400/50 hover:shadow-lg hover:shadow-rose-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-rose-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Withdrawals</span>
-                      <div className="p-1.5 bg-rose-50 rounded-lg border border-rose-100">
-                        <ArrowUpCircle className="w-3.5 h-3.5 text-rose-500" />
+                      <span className="text-[10px] text-rose-400 uppercase font-mono font-bold tracking-wider block">Total Withdrawals</span>
+                      <div className="p-1.5 bg-rose-500/10 rounded-lg border border-rose-500/20">
+                        <ArrowUpCircle className="w-3.5 h-3.5 text-rose-400" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${activeUser.totalWithdrawn.toFixed(2)}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Paid out securely</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-slate-100 font-mono tracking-tight">${activeUser.totalWithdrawn.toFixed(2)}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">Paid out securely</span>
                     </div>
                   </div>
 
                   {/* 9. Referral Gains */}
-                  <div id="card-referral-earnings" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-teal-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-teal-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-referral-earnings" className="bg-gradient-to-br from-[#091b19] via-[#0d2a26] to-[#040e0c] text-white border border-teal-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-teal-400/50 hover:shadow-lg hover:shadow-teal-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-teal-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Referral Gains</span>
-                      <div className="p-1.5 bg-teal-50 rounded-lg border border-teal-100">
-                        <Gift className="w-3.5 h-3.5 text-teal-600" />
+                      <span className="text-[10px] text-teal-400 uppercase font-mono font-bold tracking-wider block">Referral Gains</span>
+                      <div className="p-1.5 bg-teal-500/10 rounded-lg border border-teal-500/20">
+                        <Gift className="w-3.5 h-3.5 text-teal-400 animate-bounce" style={{ animationDuration: '3s' }} />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-emerald-600 font-mono tracking-tight">${referralEarningsSum.toFixed(2)}</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-teal-600 font-mono block">10% Direct rewards</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-emerald-300 font-mono tracking-tight">${referralEarningsSum.toFixed(2)}</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">10% Direct rewards</span>
                     </div>
                   </div>
 
                   {/* 10. Total Referrals */}
-                  <div id="card-total-referrals" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-pink-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-pink-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div id="card-total-referrals" className="bg-gradient-to-br from-[#1c0c16] via-[#2d1123] to-[#0e050b] text-white border border-pink-500/25 rounded-2xl p-4.5 space-y-3.5 hover:border-pink-400/50 hover:shadow-lg hover:shadow-pink-950/20 transition-all duration-300 relative group overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-pink-500/10 to-transparent rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                     <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Referrals</span>
-                      <div className="p-1.5 bg-pink-50 rounded-lg border border-pink-100">
-                        <Users className="w-3.5 h-3.5 text-pink-500" />
+                      <span className="text-[10px] text-pink-400 uppercase font-mono font-bold tracking-wider block">Total Referrals</span>
+                      <div className="p-1.5 bg-pink-500/10 rounded-lg border border-pink-500/20">
+                        <Users className="w-3.5 h-3.5 text-pink-400" />
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">{totalReferralsCount} Signups</span>
-                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Unique partners bound</span>
+                    <div className="space-y-1 relative z-10">
+                      <span className="text-xl sm:text-2xl font-black text-slate-100 font-mono tracking-tight">{totalReferralsCount} Signups</span>
+                      <span className="text-[8.5px] sm:text-[9.5px] text-slate-400 font-mono block leading-snug">Unique partners bound</span>
                     </div>
                   </div>
                 </div>
@@ -1373,31 +1490,6 @@ export default function UserDashboard({
               )}
             </div>
 
-            {/* Quick Actions Shortcuts */}
-            <div className="grid grid-cols-2 gap-4">
-              <button 
-                onClick={() => setActiveTab('properties')}
-                className="p-4 bg-white border border-slate-200 hover:border-[#10b981] rounded-[1.25rem] text-left space-y-2 group transition-all shadow-xs"
-              >
-                <div className="p-2 bg-amber-500/10 text-amber-600 rounded-xl w-max"><Building className="w-4 h-4" /></div>
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-slate-900 font-sans group-hover:text-emerald-600 block">Buy Fractional Shares</span>
-                  <span className="text-[9px] text-slate-500 block leading-tight">Explore the properties catalog and start earning capital yields right away.</span>
-                </div>
-              </button>
-
-              <button 
-                onClick={() => setActiveTab('wallet')}
-                className="p-4 bg-white border border-slate-200 hover:border-[#10b981] rounded-[1.25rem] text-left space-y-2 group transition-all shadow-xs"
-              >
-                <div className="p-2 bg-emerald-500/10 text-emerald-600 rounded-xl w-max"><Wallet className="w-4 h-4" /></div>
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-slate-900 font-sans group-hover:text-emerald-600 block">Binance Transfers Hub</span>
-                  <span className="text-[9px] text-slate-500 block leading-tight">Deposit coins via secure TRC20/BEP20 or submit custom withdrawal requests.</span>
-                </div>
-              </button>
-            </div>
-
           </div>
         )}
 
@@ -1406,40 +1498,42 @@ export default function UserDashboard({
           <div className="space-y-4">
             
             {/* Catalog search tools */}
-            <div className="bg-slate-50/50 border border-slate-200/60 p-4 sm:p-5 rounded-2xl space-y-4 shadow-xs text-slate-850">
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+            <div className="bg-gradient-to-br from-[#0c0e1e] via-[#111430] to-[#070914] border border-indigo-500/25 p-4 sm:p-5 rounded-2xl space-y-4 shadow-xl text-white relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent rounded-full blur-2xl pointer-events-none"></div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center relative z-10">
                 
                 {/* Search Bar */}
                 <div className="relative w-full md:col-span-8">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
                   <input 
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search locations or assets..."
-                    className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/80 transition-all shadow-xs"
+                    className="w-full bg-slate-950/80 border border-indigo-500/25 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:border-indigo-400/50 focus:ring-1 focus:ring-indigo-400/20 transition-all shadow-inner"
                   />
                 </div>
 
                 {/* Sort selector wrapper */}
-                <div className="flex items-center space-x-2 w-full md:col-span-4 bg-white border border-slate-200 px-3 py-2 rounded-xl shadow-xs">
-                  <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span className="text-[10px] text-slate-400 uppercase font-mono tracking-wider shrink-0 font-bold">Sort:</span>
+                <div className="flex items-center space-x-2 w-full md:col-span-4 bg-slate-950/80 border border-indigo-500/25 px-3 py-2.5 rounded-xl shadow-inner text-slate-300">
+                  <Filter className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span className="text-[10px] text-indigo-300/80 uppercase font-mono tracking-wider shrink-0 font-bold">Sort:</span>
                   <select 
                     value={sortBy}
                     onChange={(e: any) => setSortBy(e.target.value)}
-                    className="bg-transparent border-none text-xs text-slate-800 focus:outline-none cursor-pointer pr-1 py-0.5 font-bold flex-1 w-full"
+                    className="bg-transparent border-none text-xs text-slate-100 focus:outline-none cursor-pointer pr-1 py-0.5 font-bold flex-1 w-full outline-none"
                   >
-                    <option value="roi">Expected Yield</option>
-                    <option value="price">Share Price</option>
-                    <option value="shares">Available Shares</option>
+                    <option value="roi" className="bg-[#0c0e1e] text-slate-100">Expected Yield</option>
+                    <option value="price" className="bg-[#0c0e1e] text-slate-100">Share Price</option>
+                    <option value="shares" className="bg-[#0c0e1e] text-slate-100">Available Shares</option>
                   </select>
                 </div>
               </div>
 
               {/* Category Pills List (Fully responsive wrapping layout - No scrolling) */}
-              <div className="pt-3 border-t border-slate-200/40 space-y-2">
-                <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest font-black block">Asset Class</span>
+              <div className="pt-3 border-t border-indigo-500/15 space-y-2 relative z-10">
+                <span className="text-[10px] text-indigo-300/80 font-mono uppercase tracking-widest font-black block">Asset Class</span>
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     { name: 'All', icon: <Sparkles className="w-3 h-3" /> },
@@ -1453,13 +1547,13 @@ export default function UserDashboard({
                       <button
                         key={cat.name}
                         onClick={() => setSelectedCategory(cat.name)}
-                        className={`px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all duration-200 flex items-center gap-1.5 border cursor-pointer ${
+                        className={`px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all duration-250 flex items-center gap-1.5 border cursor-pointer ${
                           isActive 
-                            ? 'bg-slate-900 border-slate-900 text-white shadow-sm' 
-                            : 'bg-white border-slate-200 text-slate-650 hover:text-slate-900 hover:border-slate-350 hover:bg-slate-50'
+                            ? 'bg-gradient-to-r from-indigo-500 to-violet-600 border-indigo-400/40 text-white shadow-md shadow-indigo-950/30' 
+                            : 'bg-indigo-950/20 border-indigo-500/10 text-indigo-300 hover:text-white hover:border-indigo-500/30 hover:bg-indigo-500/5'
                         }`}
                       >
-                        <span className={isActive ? 'text-amber-400' : 'text-slate-400'}>{cat.icon}</span>
+                        <span className={isActive ? 'text-amber-300' : 'text-indigo-400'}>{cat.icon}</span>
                         <span>{cat.name}</span>
                       </button>
                     );
@@ -1469,26 +1563,29 @@ export default function UserDashboard({
             </div>
 
             {/* Properties Cards list */}
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredProjects.map((project) => (
                 <div 
                   key={project.id}
-                  className="bg-white border border-[#e2e8f0] rounded-[1.25rem] overflow-hidden hover:border-[#10b981] shadow-sm hover:shadow-xs transition-all flex flex-col justify-between"
+                  className="bg-gradient-to-br from-[#0c1024] via-[#121636] to-[#070914] border border-indigo-500/20 rounded-2xl overflow-hidden hover:border-indigo-400/50 shadow-lg hover:shadow-xl hover:shadow-indigo-950/20 transition-all duration-300 relative group flex flex-col justify-between"
                 >
+                  {/* Hover visual glow effect inside card */}
+                  <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-transparent rounded-full blur-2xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
+
                   {/* Image and Category */}
-                  <div className="relative aspect-[16/10] overflow-hidden bg-slate-100">
+                  <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
                     <img 
                       src={project.imageUrl} 
                       alt={project.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute top-3 left-3 px-2.5 py-1 bg-slate-900/90 backdrop-blur rounded-lg border border-slate-700 text-[9px] font-bold font-mono tracking-wider text-amber-400">
+                    <div className="absolute top-3.5 left-3.5 px-3 py-1 bg-slate-950/80 backdrop-blur-md rounded-lg border border-indigo-500/30 text-[9.5px] font-extrabold font-mono tracking-wider text-indigo-300">
                       {project.category.toUpperCase()}
                     </div>
                     {project.status === 'Sold Out' && (
-                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center">
-                        <span className="px-4 py-2 bg-red-500/80 border border-red-500 text-white font-mono font-bold tracking-widest text-xs uppercase rounded-lg">
+                      <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center">
+                        <span className="px-4 py-2 bg-rose-500/20 border border-rose-500/30 text-rose-400 font-mono font-bold tracking-widest text-xs uppercase rounded-xl shadow-lg shadow-rose-950/50">
                           SOLDOUT
                         </span>
                       </div>
@@ -1496,65 +1593,65 @@ export default function UserDashboard({
                   </div>
 
                   {/* Body details */}
-                  <div className="p-4 space-y-4 flex-1 flex flex-col justify-between">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-1 text-[10px] text-slate-500 font-mono tracking-tight">
-                        <MapPin className="w-3 text-emerald-600" />
+                  <div className="p-4 space-y-4 flex-1 flex flex-col justify-between relative z-10">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center space-x-1 text-[10.5px] text-slate-400 font-mono tracking-tight">
+                        <MapPin className="w-3.5 text-indigo-400" />
                         <span>{project.location}</span>
                       </div>
-                      <h4 className="text-sm font-bold text-slate-900 font-sans truncate">{project.name}</h4>
-                      <p className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
+                      <h4 className="text-sm font-extrabold text-slate-100 group-hover:text-white transition-colors font-sans truncate">{project.name}</h4>
+                      <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-2">
                         {project.description}
                       </p>
                     </div>
 
                     {/* Meta stats */}
-                    <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl text-center font-mono text-[10px] border border-slate-200">
+                    <div className="grid grid-cols-3 gap-1 bg-slate-950/40 p-2.5 rounded-xl text-center font-mono text-[10px] border border-indigo-500/15 shadow-inner">
                       <div>
-                        <span className="block text-slate-400 text-[9px] uppercase">Yield ROI</span>
-                        <span className="text-xs font-bold text-emerald-600">+{project.expectedRoi}% /yr</span>
+                        <span className="block text-indigo-300/70 text-[8.5px] uppercase tracking-wider mb-0.5 truncate" title="ROI per Year">ROI / Yr</span>
+                        <span className="text-[11px] sm:text-xs font-bold text-emerald-400">+{project.expectedRoi}%</span>
                       </div>
                       <div>
-                        <span className="block text-slate-400 text-[9px] uppercase">Share Price</span>
-                        <span className="text-xs font-bold text-emerald-600">${project.pricePerShare}</span>
+                        <span className="block text-indigo-300/70 text-[8.5px] uppercase tracking-wider mb-0.5 truncate" title="Price per Share in USDT">Price (USDT)</span>
+                        <span className="text-[11px] sm:text-xs font-bold text-emerald-400">${project.pricePerShare}</span>
                       </div>
                       <div>
-                        <span className="block text-slate-400 text-[9px] uppercase">Duration</span>
-                        <span className="text-xs font-bold text-emerald-600">{project.durationMonths || 12} Mos</span>
+                        <span className="block text-indigo-300/70 text-[8.5px] uppercase tracking-wider mb-0.5 truncate" title="Contract Duration">Duration</span>
+                        <span className="text-[11px] sm:text-xs font-bold text-indigo-300">{project.durationMonths || 12} Mos</span>
                       </div>
                     </div>
 
                     {/* Progress */}
-                    <div className="space-y-1 text-[10px] font-mono">
-                      <div className="flex justify-between text-slate-500">
-                        <span>Available: {project.availableShares} / {project.totalShares} shs</span>
-                        <span className="font-bold text-emerald-600">
+                    <div className="space-y-1.5 text-[10.5px] font-mono">
+                      <div className="flex justify-between text-slate-400">
+                        <span>Available: <strong className="text-slate-200">{project.availableShares}</strong> / {project.totalShares} shs</span>
+                        <span className="font-bold text-emerald-400">
                           {project.status === 'Sold Out' ? '100% Sold' : `${Math.round(((project.totalShares - project.availableShares) / project.totalShares) * 100)}%`}
                         </span>
                       </div>
-                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden border border-slate-200">
+                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-indigo-500/15 p-[1px]">
                         <div 
-                          className="bg-[#10b981] h-full rounded-full"
+                          className="bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 h-full rounded-full transition-all duration-500"
                           style={{ width: `${project.status === 'Sold Out' ? 100 : ((project.totalShares - project.availableShares) / project.totalShares) * 100}%` }}
                         ></div>
                       </div>
                     </div>
 
                     {/* Documents List */}
-                    <div className="pt-2 border-t border-slate-200">
-                      <span className="block text-[9px] font-mono uppercase text-slate-400 mb-1.5 font-bold">📂 Secured Legal Documents</span>
+                    <div className="pt-3 border-t border-indigo-500/15">
+                      <span className="block text-[9px] font-mono uppercase text-indigo-300/80 mb-2 font-black tracking-wider">📂 Secured Legal Documents</span>
                       <div className="flex flex-wrap gap-1.5 font-mono text-[9px]">
                         {project.documents.map((doc, dIdx) => (
                           <span 
                             key={dIdx}
-                            className="bg-slate-50 border border-slate-200 hover:border-emerald-500 cursor-pointer p-1 rounded-lg text-slate-600 flex items-center gap-1 shrink-0 transition-colors"
+                            className="bg-indigo-950/20 border border-indigo-500/15 hover:border-indigo-400/40 cursor-pointer p-1.5 rounded-lg text-indigo-300 hover:text-white flex items-center gap-1.5 transition-all font-mono text-[9px] max-w-full"
                             onClick={() => {
                               setActiveViewDoc({ docName: doc, project });
                               setPdfZoom(100);
                             }}
                           >
-                            <FileText className="w-2.5 h-2.5 text-[#10b981]" />
-                            <span>{doc}</span>
+                            <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span className="truncate">{doc}</span>
                           </span>
                         ))}
                       </div>
@@ -1568,15 +1665,15 @@ export default function UserDashboard({
                           setSelectedProjectForCalc(project);
                           setCalculatorShares(1);
                         }}
-                        className="w-full py-2.5 bg-[#0f172a] hover:bg-slate-800 text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-xs"
+                        className="w-full py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white font-bold rounded-xl text-[10.5px] uppercase tracking-wider flex items-center justify-center gap-2 transition-all duration-300 shadow-lg shadow-indigo-950/40 cursor-pointer border border-indigo-500/30 hover:border-indigo-400/50"
                       >
-                        <Calculator className="w-3.5 h-3.5" />
+                        <Calculator className="w-3.5 h-3.5 text-indigo-200" />
                         <span>Calculate & Purchase Shares</span>
                       </button>
                     ) : (
                       <button
                         disabled
-                        className="w-full py-2.5 bg-slate-50 border border-slate-200 text-slate-400 font-bold rounded-xl text-xs uppercase tracking-wider cursor-not-allowed"
+                        className="w-full py-3 bg-indigo-950/15 border border-indigo-500/10 text-indigo-300/40 font-bold rounded-xl text-[10.5px] uppercase tracking-wider cursor-not-allowed text-center"
                       >
                         Property Unavailable
                       </button>
@@ -1588,36 +1685,101 @@ export default function UserDashboard({
 
             {/* INVESTMENT DRAWER MODAL POPUP */}
             {selectedProjectForCalc && (
-              <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-                <div className="bg-white border border-slate-200 rounded-[1.25rem] p-6 max-w-sm w-full space-y-4 shadow-xl relative text-slate-850">
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+                <div className="bg-gradient-to-br from-[#0c0e1e] via-[#161a3f] to-[#080a14] text-white border border-indigo-500/35 rounded-[1.5rem] p-6 max-w-sm w-full space-y-5 shadow-2xl relative overflow-hidden animate-fade-in">
                   
-                  <button 
-                    onClick={() => setSelectedProjectForCalc(null)}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
+                  {/* Beautiful Glassmorphic Overlay Error Popup on top of card */}
+                  {calcError && (
+                    <div className="absolute inset-0 z-50 rounded-[1.5rem] bg-[#070915]/98 backdrop-blur-md flex flex-col justify-center items-center p-6 text-center space-y-5 animate-fade-in">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-rose-500/10 to-transparent rounded-full blur-2xl pointer-events-none"></div>
+                      
+                      <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-full shadow-lg shadow-rose-950/20 relative animate-bounce" style={{ animationDuration: '3s' }}>
+                        <AlertTriangle className="w-8 h-8 text-rose-400" />
+                      </div>
 
-                  <div className="space-y-1">
-                    <span className="text-[9px] font-mono text-emerald-600 uppercase tracking-widest font-bold">Fractional Share Calculator</span>
-                    <h5 className="font-sans font-bold text-slate-900 text-sm leading-tight truncate">
-                      {selectedProjectForCalc.name}
-                    </h5>
-                    <span className="text-[10px] text-slate-500 block font-mono">Price Per Share: <strong className="text-slate-800">${selectedProjectForCalc.pricePerShare} USDT</strong></span>
+                      <div className="space-y-2 px-2">
+                        <h4 className="text-base font-sans font-bold text-white tracking-wide">
+                          Transaction Declined
+                        </h4>
+                        <p className="text-[11px] text-slate-300 font-mono leading-relaxed max-w-xs mx-auto">
+                          {calcError}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2.5 w-full pt-2 px-2">
+                        <button
+                          onClick={() => {
+                            setCalcError(null);
+                            setSelectedProjectForCalc(null);
+                            setActiveTab('wallet');
+                          }}
+                          className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold uppercase rounded-xl text-[10px] tracking-wider transition-all duration-300 flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/25 cursor-pointer"
+                        >
+                          <Wallet className="w-3.5 h-3.5" />
+                          <span>Deposit USDT</span>
+                        </button>
+
+                        <button
+                          onClick={() => setCalcError(null)}
+                          className="w-full py-2 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 text-indigo-300 hover:text-white rounded-xl text-[10px] font-bold uppercase transition-all duration-200 tracking-wider cursor-pointer"
+                        >
+                          Adjust Share Amount
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Decorative glowing gradient elements in background */}
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent rounded-full blur-2xl pointer-events-none"></div>
+                  <div className="absolute -bottom-10 -left-10 w-24 h-24 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-full blur-xl pointer-events-none"></div>
+
+                  {/* Header Bar with Back and Close options */}
+                  <div className="flex justify-between items-center relative z-10 border-b border-indigo-500/15 pb-3">
+                    <button
+                      onClick={() => setSelectedProjectForCalc(null)}
+                      className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-indigo-400 hover:text-indigo-300 transition-all bg-indigo-500/10 hover:bg-indigo-500/15 px-2.5 py-1 rounded-lg border border-indigo-500/20"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Back</span>
+                    </button>
+                    
+                    <button 
+                      onClick={() => setSelectedProjectForCalc(null)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-indigo-500/20 transition-all"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
 
-                  {/* Calculator visual settings */}
-                  <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  {/* Property Info Header */}
+                  <div className="flex items-start gap-3 relative z-10">
+                    <div className="p-2 bg-indigo-500/15 border border-indigo-500/20 rounded-xl mt-0.5">
+                      <Building className="w-4.5 h-4.5 text-indigo-400" />
+                    </div>
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <span className="text-[9px] font-mono text-indigo-400 uppercase tracking-widest font-extrabold block">Fractional Shares Entry</span>
+                      <h5 className="font-sans font-bold text-slate-100 text-sm leading-tight truncate">
+                        {selectedProjectForCalc.name}
+                      </h5>
+                      <span className="text-[10px] text-slate-400 block font-mono">
+                        Price Per Share: <strong className="text-emerald-400 font-sans font-bold">${selectedProjectForCalc.pricePerShare} USDT</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Calculator visual settings wrapper */}
+                  <div className="space-y-4 bg-slate-950/50 p-4.5 rounded-2xl border border-indigo-500/20 relative z-10 shadow-inner">
                     
-                    <div className="space-y-1 text-center font-mono">
-                      <span className="text-[9px] uppercase font-mono tracking-wider font-bold text-slate-400">Select Shares Quantity</span>
+                    <div className="space-y-2 text-center font-mono">
+                      <span className="text-[9px] uppercase font-mono tracking-wider font-extrabold text-indigo-300/80 block">Select Shares Quantity</span>
                       
                       {/* Plus minus manual input */}
                       <div className="flex items-center justify-center space-x-3 pt-1">
                         <button
                           type="button"
                           onClick={() => setCalculatorShares(prev => Math.max(1, prev - 1))}
-                          className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 border border-slate-300 flex items-center justify-center font-bold font-mono text-sm text-slate-705"
+                          className="w-9 h-9 rounded-xl bg-indigo-950/40 hover:bg-indigo-500/20 border border-indigo-500/25 hover:border-indigo-500/50 flex items-center justify-center font-extrabold font-mono text-base text-indigo-300 transition-all cursor-pointer shadow-inner active:scale-95"
                         >
                           -
                         </button>
@@ -1631,13 +1793,13 @@ export default function UserDashboard({
                             const val = parseInt(e.target.value);
                             setCalculatorShares(isNaN(val) ? 1 : Math.max(1, val));
                           }}
-                          className="w-16 bg-white border border-slate-250 text-center text-sm font-mono font-bold text-slate-800 p-1 rounded-lg focus:outline-none"
+                          className="w-18 bg-slate-950 border border-indigo-500/25 text-center text-sm font-mono font-bold text-slate-100 p-1.5 rounded-xl focus:outline-none focus:border-indigo-400/50 focus:ring-1 focus:ring-indigo-400/20"
                         />
 
                         <button
                           type="button"
                           onClick={() => setCalculatorShares(prev => Math.min(selectedProjectForCalc.availableShares, prev + 1))}
-                          className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 border border-slate-300 flex items-center justify-center font-bold font-mono text-sm text-slate-705"
+                          className="w-9 h-9 rounded-xl bg-indigo-950/40 hover:bg-indigo-500/20 border border-indigo-500/25 hover:border-indigo-500/50 flex items-center justify-center font-extrabold font-mono text-base text-indigo-300 transition-all cursor-pointer shadow-inner active:scale-95"
                         >
                           +
                         </button>
@@ -1645,16 +1807,16 @@ export default function UserDashboard({
                     </div>
 
                     {/* Selection Presets */}
-                    <div className="grid grid-cols-5 gap-1 pt-1 text-center font-mono">
+                    <div className="grid grid-cols-5 gap-1.5 pt-1 text-center font-mono">
                       {[1, 2, 5, 10, 50].map((num) => (
                         <button
                           key={num}
                           type="button"
                           onClick={() => setCalculatorShares(Math.min(selectedProjectForCalc.availableShares, num))}
-                          className={`p-1 border text-[9px] font-bold rounded-lg ${
+                          className={`p-1.5 border text-[9.5px] font-bold rounded-lg font-mono transition-all duration-200 ${
                             calculatorShares === num 
-                              ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs' 
-                              : 'bg-white border-slate-200 text-slate-600'
+                              ? 'bg-emerald-500 border-emerald-400 text-white shadow-md shadow-emerald-950/30' 
+                              : 'bg-indigo-950/30 border-indigo-500/15 hover:border-indigo-500/30 text-indigo-300 hover:text-white'
                           }`}
                         >
                           {num} Shs
@@ -1663,48 +1825,67 @@ export default function UserDashboard({
                     </div>
 
                     {/* Auto Calculation outputs */}
-                    <div className="border-t border-slate-200 pt-2 space-y-1.5 font-mono text-[10px]">
-                      <div className="flex justify-between text-slate-500">
+                    <div className="border-t border-indigo-500/15 pt-3.5 space-y-2 font-mono text-[10.5px]">
+                      <div className="flex justify-between items-center text-slate-400">
                         <span>Total Cost Basis:</span>
-                        <span className="font-bold text-slate-900">${calculatorCost.toFixed(2)} USDT</span>
+                        <span className="font-bold text-slate-100 text-[11px]">${calculatorCost.toFixed(2)} USDT</span>
                       </div>
-                      <div className="flex justify-between text-slate-500">
+                      <div className="flex justify-between items-center text-slate-400">
                         <span>Expected Yield ({selectedProjectForCalc.expectedRoi}%):</span>
-                        <span className="font-bold text-emerald-600">+${(calculatorCost * (selectedProjectForCalc.expectedRoi / 100)).toFixed(2)} /yr</span>
+                        <span className="font-bold text-emerald-400 text-[11px] flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3 text-emerald-400" />
+                          +${(calculatorCost * (selectedProjectForCalc.expectedRoi / 100)).toFixed(2)} /yr
+                        </span>
                       </div>
-                      <div className="flex justify-between text-slate-500">
-                        <span>Estimated monthly profit:</span>
-                        <span className="font-bold text-emerald-600">+${calculatorEstimatedMthly.toFixed(2)} /m</span>
+                      <div className="flex justify-between items-center text-slate-400">
+                        <span>Monthly Yield Estimate:</span>
+                        <span className="font-bold text-emerald-400 text-[11px]">+${calculatorEstimatedMthly.toFixed(2)} /m</span>
                       </div>
-                      <div className="flex justify-between text-slate-500 border-t border-slate-200 pt-1">
-                        <span>My Wallet Balance:</span>
-                        <span className="font-bold text-amber-600">${availableUserBalance.toFixed(2)} USDT</span>
+                      
+                      <div className="flex justify-between items-center text-slate-400 border-t border-indigo-500/15 pt-2.5 mt-1.5">
+                        <span className="flex items-center gap-1">
+                          <Wallet className="w-3 h-3 text-amber-400" />
+                          Wallet Balance:
+                        </span>
+                        <span className={`font-bold text-[11px] ${availableUserBalance >= calculatorCost ? 'text-amber-400' : 'text-rose-400 font-extrabold animate-pulse'}`}>
+                          ${availableUserBalance.toFixed(2)} USDT
+                        </span>
                       </div>
                     </div>
 
                   </div>
 
+                  {/* Error popup handled via absolute overlay above */}
+
                   {/* Anti-Fraud Check alert indicator */}
-                  {calculatorCost >= 113 && activeUser.referredBy && (
-                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[9px] font-mono text-emerald-800">
-                      <Award className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Dual 10% referral bonus (${(calculatorCost * 0.1).toFixed(2)}) will trigger successfully!</span>
+                  {calculatorCost >= 113 && activeUser.referredBy && activeUser.referredBy.trim() !== '' && !hasAlreadyInvested && (
+                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-start gap-2.5 text-[9.5px] font-mono text-emerald-300 relative overflow-hidden z-10">
+                      <div className="absolute top-0 right-0 w-8 h-8 bg-emerald-500/5 rounded-full blur-md"></div>
+                      <Award className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="font-bold uppercase tracking-wider block text-emerald-400">Referral Multiplier Activated</span>
+                        <span>Dual 10% referral bonus (${(calculatorCost * 0.1).toFixed(2)}) will trigger successfully!</span>
+                      </div>
                     </div>
                   )}
 
-                  <div className="space-y-2">
+                  {/* Action CTA Buttons */}
+                  <div className="space-y-2.5 relative z-10 pt-1">
                     <button
                       id="confirm-share-purchase-cta"
                       onClick={handleCalculatorPurchase}
-                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold uppercase rounded-lg text-[10px] tracking-wider shadow-xs transition-colors"
+                      className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 active:scale-[0.98] text-white font-bold uppercase rounded-xl text-[10.5px] tracking-wider shadow-lg shadow-emerald-950/25 transition-all duration-300 cursor-pointer flex items-center justify-center gap-2"
                     >
-                      Process Secure Purchase
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Process Secure Purchase</span>
                     </button>
+                    
                     <button
                       onClick={() => setSelectedProjectForCalc(null)}
-                      className="w-full py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-500 rounded-lg text-[10px] font-bold uppercase transition-colors"
+                      className="w-full py-2.5 bg-indigo-950/30 border border-indigo-500/20 hover:border-indigo-500/40 hover:bg-indigo-950/40 text-indigo-300 hover:text-white rounded-xl text-[10px] font-bold uppercase transition-all duration-200 tracking-wider flex items-center justify-center gap-1.5"
                     >
-                      Cancel Purchase
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Cancel & Close</span>
                     </button>
                   </div>
 
@@ -1942,8 +2123,12 @@ export default function UserDashboard({
                     <ShieldCheck className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-sans font-bold text-slate-900">Cryptographic Identity Binding</h4>
-                    <span className="text-[10px] text-slate-500 font-mono">Verify and bind your designated receiving credentials</span>
+                    <h4 className="text-sm font-sans font-bold text-slate-900">
+                      {activeUser.wallet.usdtTrc20Address || activeUser.wallet.usdtBep20Address ? "Cryptographic Identity Verified" : "Cryptographic Identity Binding"}
+                    </h4>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {activeUser.wallet.usdtTrc20Address || activeUser.wallet.usdtBep20Address ? "Your designated receiving credentials are securely bound and active" : "Verify and bind your designated receiving credentials"}
+                    </span>
                   </div>
                 </div>
                 <div className="hidden sm:block text-[9px] font-mono bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
@@ -3284,8 +3469,10 @@ export default function UserDashboard({
                           e.target.value = ''; // Reset to allow re-selecting the same file if needed
                         }}
                       />
-                      <label
-                        htmlFor="kyc-file-input"
+                      <div
+                        onClick={() => {
+                          kycFileInputRef.current?.click();
+                        }}
                         onDragOver={(e) => {
                           e.preventDefault();
                           setIsKycDragging(true);
@@ -3340,7 +3527,7 @@ export default function UserDashboard({
                             <span className="text-[8px] text-slate-400 font-mono">Supports PNG, JPG, PDF up to 10MB</span>
                           </>
                         )}
-                      </label>
+                      </div>
                     </div>
 
                   </div>

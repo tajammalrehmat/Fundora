@@ -57,6 +57,10 @@ export const sendOtpEmail = async (params: EmailParams): Promise<{ success: bool
 
   // OPTION 1: RESEND API (Zero branding, completely free with custom domains)
   if (RESEND_API_KEY) {
+    console.log(`[Email Service] Resend is configured on client. Attempting to deliver premium OTP to ${toEmail}...`);
+    let proxyFailed = false;
+
+    // First, try the proxy server route (Express backend)
     try {
       const response = await fetch('/api/send-otp', {
         method: 'POST',
@@ -75,16 +79,93 @@ export const sendOtpEmail = async (params: EmailParams): Promise<{ success: bool
         return { success: true };
       } else {
         const errorText = await response.text();
-        console.error('Resend API Proxy failed to deliver email:', errorText);
-        return { success: false, error: errorText || 'Failed to send via Resend Proxy.' };
+        console.warn(`Resend API Proxy returned error (${response.status}): ${errorText}. Attempting direct client-side fallback...`);
+        proxyFailed = true;
       }
     } catch (err: any) {
-      console.error('Network error during Resend proxy email dispatch:', err);
-      return { success: false, error: err.message || 'Network error on Resend proxy request.' };
+      console.warn(`Resend API Proxy unreachable (normal for static Vercel SPA hosting): ${err.message}. Attempting direct client-side fallback...`);
+      proxyFailed = true;
+    }
+
+    // Direct Resend API dispatch from client-side fallback (if proxy is unreachable/fails)
+    if (proxyFailed) {
+      try {
+        const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Fundora OTP</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fa;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+<tr>
+<td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 0 10px rgba(0,0,0,.08);">
+<tr>
+<td style="background:#0d6efd;color:#ffffff;padding:20px;text-align:center;font-size:26px;font-weight:bold;">
+Fundora
+</td>
+</tr>
+<tr>
+<td style="padding:35px;">
+<h2 style="margin-top:0;color:#222;">Verify Your Email</h2>
+<p style="font-size:16px;color:#555;">Hello ${toName || 'Investor'},</p>
+<p style="font-size:16px;color:#555;line-height:26px;">Use the verification code below to complete your registration.</p>
+<div style="margin:35px 0;text-align:center;">
+<div style="display:inline-block;background:#0d6efd;color:#fff;padding:18px 35px;font-size:34px;font-weight:bold;letter-spacing:8px;border-radius:8px;">${otpCode}</div>
+</div>
+<p style="font-size:15px;color:#777;">This code will expire in <strong>10 minutes</strong>.</p>
+<p style="font-size:15px;color:#777;">If you didn't request this verification, simply ignore this email.</p>
+<hr>
+<p style="font-size:13px;color:#999;text-align:center;">© 2026 Fundora. All rights reserved.</p>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>`;
+
+        console.log(`[Resend Direct Client] Sending OTP directly to ${toEmail} from browser...`);
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          mode: 'cors',
+          body: JSON.stringify({
+            from: `Fundora <${RESEND_FROM_EMAIL}>`,
+            to: [toEmail],
+            subject: 'Your Fundora Verification Code',
+            html: htmlContent,
+          }),
+        });
+
+        if (response.ok) {
+          console.log(`Successfully dispatched direct client-side OTP to ${toEmail} via Resend API`);
+          return { success: true };
+        } else {
+          const errorText = await response.text();
+          console.error('[Resend Direct Client] Direct Resend API failed:', errorText);
+          return { 
+            success: false, 
+            error: `Resend Send Failed: ${errorText || 'Unknown direct API error'}. Verify your Vercel VITE_RESEND_API_KEY and domain setup.` 
+          };
+        }
+      } catch (err: any) {
+        console.error('[Resend Direct Client] Network exception:', err);
+        return { 
+          success: false, 
+          error: `Resend Connection Failed: ${err.message || 'Network error'}. Please verify your network and make sure VITE_RESEND_API_KEY is properly added in Vercel settings.` 
+        };
+      }
     }
   }
 
-  // OPTION 2: EMAILJS FALLBACK
+  // OPTION 2: EMAILJS FALLBACK (Only executed if RESEND_API_KEY is not configured)
+  console.log('[Email Service] Resend is not configured on client. Using EmailJS fallback delivery...');
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
       method: 'POST',
