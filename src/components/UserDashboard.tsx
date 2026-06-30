@@ -3273,16 +3273,19 @@ export default function UserDashboard({
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Upload Scanned Document Copy</label>
                       <input 
                         type="file" 
+                        id="kyc-file-input"
                         ref={kycFileInputRef}
-                        className="hidden"
+                        className="sr-only"
                         accept="image/*,application/pdf"
                         onChange={(e) => {
                           if (e.target.files && e.target.files[0]) {
                             handleKycFileSelect(e.target.files[0]);
                           }
+                          e.target.value = ''; // Reset to allow re-selecting the same file if needed
                         }}
                       />
-                      <div
+                      <label
+                        htmlFor="kyc-file-input"
                         onDragOver={(e) => {
                           e.preventDefault();
                           setIsKycDragging(true);
@@ -3295,10 +3298,7 @@ export default function UserDashboard({
                             handleKycFileSelect(e.dataTransfer.files[0]);
                           }
                         }}
-                        onClick={() => {
-                          kycFileInputRef.current?.click();
-                        }}
-                        className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2 select-none min-h-[140px] ${
+                        className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2 select-none min-h-[140px] block ${
                           isKycDragging 
                             ? 'border-emerald-500 bg-emerald-50/30' 
                             : kycFileName 
@@ -3340,7 +3340,7 @@ export default function UserDashboard({
                             <span className="text-[8px] text-slate-400 font-mono">Supports PNG, JPG, PDF up to 10MB</span>
                           </>
                         )}
-                      </div>
+                      </label>
                     </div>
 
                   </div>
