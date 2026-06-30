@@ -27,35 +27,46 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
     setScreen(initialScreen);
   }, [initialScreen]);
 
-  // Parse and pre-populate referral code from URL on mount
+  // Parse and pre-populate referral code from URL
   useEffect(() => {
-    try {
-      let ref = '';
-      
-      // 1. Try standard query params (e.g., ?ref=INV-1234)
-      if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search);
-        ref = params.get('ref') || '';
+    const parseReferral = () => {
+      try {
+        let ref = '';
         
-        // 2. Try parsing query params embedded in hash (e.g., #/register?ref=INV-1234)
-        if (!ref && window.location.hash) {
-          const hashParts = window.location.hash.split('?');
-          if (hashParts.length > 1) {
-            const hashParams = new URLSearchParams(hashParts[1]);
-            ref = hashParams.get('ref') || '';
+        // 1. Try standard query params (e.g., ?ref=INV-1234)
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          ref = params.get('ref') || '';
+          
+          // 2. Try parsing query params embedded in hash (e.g., #/register?ref=INV-1234)
+          if (!ref && window.location.hash) {
+            const hashParts = window.location.hash.split('?');
+            if (hashParts.length > 1) {
+              const hashParams = new URLSearchParams(hashParts[1]);
+              ref = hashParams.get('ref') || '';
+            }
           }
         }
+        
+        if (ref) {
+          const cleanRef = ref.trim().toUpperCase();
+          console.log('[AuthPages] Auto-detected referral code from URL:', cleanRef);
+          setReferralCodeInput(cleanRef);
+        }
+      } catch (err) {
+        console.error('[AuthPages] Error parsing referral code from URL:', err);
       }
-      
-      if (ref) {
-        const cleanRef = ref.trim().toUpperCase();
-        console.log('[AuthPages] Auto-detected referral code from URL:', cleanRef);
-        setReferralCodeInput(cleanRef);
-      }
-    } catch (err) {
-      console.error('[AuthPages] Error parsing referral code from URL:', err);
+    };
+
+    parseReferral();
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hashchange', parseReferral);
+      return () => {
+        window.removeEventListener('hashchange', parseReferral);
+      };
     }
-  }, []);
+  }, [initialScreen]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');

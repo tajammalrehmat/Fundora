@@ -187,6 +187,14 @@ export default function App() {
       newHash = `#/admin/${activeAdminTab}`;
     }
 
+    // Preserve any existing query parameters from the current hash (e.g. ?ref=INV-5656)
+    if (window.location.hash) {
+      const parts = window.location.hash.split('?');
+      if (parts.length > 1 && newHash && !newHash.includes('?')) {
+        newHash = `${newHash}?${parts[1]}`;
+      }
+    }
+
     console.log('[App] hash update useEffect currentPage:', currentPage, 'currentHash:', window.location.hash, 'newHash:', newHash);
     if (window.location.hash !== newHash) {
       console.log('[App] Replacing history hash with:', newHash);
