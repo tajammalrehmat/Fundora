@@ -107,11 +107,11 @@ export default function App() {
 
       if (!hash || hash === '#/' || hash === '#/home') {
         if (currentPg !== 'home') setCurrentPage('home');
-      } else if (hash === '#/login') {
+      } else if (hash === '#/login' || hash.startsWith('#/login')) {
         if (currentPg !== 'login') setCurrentPage('login');
-      } else if (hash === '#/register') {
+      } else if (hash === '#/register' || hash.startsWith('#/register')) {
         if (currentPg !== 'register') setCurrentPage('register');
-      } else if (hash === '#/forgot') {
+      } else if (hash === '#/forgot' || hash.startsWith('#/forgot')) {
         if (currentPg !== 'forgot') setCurrentPage('forgot');
       } else if (hash.startsWith('#/dashboard')) {
         const parts = hash.split('/');

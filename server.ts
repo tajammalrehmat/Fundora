@@ -271,6 +271,22 @@ If you didn't request this verification, simply ignore this email.
     res.json({ status: "ok" });
   });
 
+  // Redirect direct /join paths to client-side SPA hash routing
+  app.get("/join", (req, res) => {
+    const ref = req.query.ref || "";
+    const redirectUrl = ref ? `/#/register?ref=${ref}` : "/#/register";
+    console.log(`[Redirect] /join path accessed. Redirecting to ${redirectUrl}`);
+    res.redirect(redirectUrl);
+  });
+
+  // Redirect direct /register paths to client-side SPA hash routing
+  app.get("/register", (req, res) => {
+    const ref = req.query.ref || "";
+    const redirectUrl = ref ? `/#/register?ref=${ref}` : "/#/register";
+    console.log(`[Redirect] /register path accessed. Redirecting to ${redirectUrl}`);
+    res.redirect(redirectUrl);
+  });
+
   // Integrate Vite middleware in development
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");

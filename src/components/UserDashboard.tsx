@@ -2836,10 +2836,15 @@ export default function UserDashboard({
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <span className="text-[8px] text-slate-500 uppercase block font-bold">Automated Invitation Link</span>
                   <div className="flex items-center justify-between text-[11px] text-slate-700 pt-1">
-                    <span className="truncate pr-2 select-all">https://fundora.one/join?ref={activeUser.referralCode}</span>
+                    <span className="truncate pr-2 select-all">
+                      {typeof window !== 'undefined' ? `${window.location.origin}/#/register?ref=${activeUser.referralCode}` : `https://fundora.one/#/register?ref=${activeUser.referralCode}`}
+                    </span>
                     <button 
                       type="button" 
-                      onClick={() => triggerCopy(`https://fundora.one/join?ref=${activeUser.referralCode}`, 'link')}
+                      onClick={() => {
+                        const link = typeof window !== 'undefined' ? `${window.location.origin}/#/register?ref=${activeUser.referralCode}` : `https://fundora.one/#/register?ref=${activeUser.referralCode}`;
+                        triggerCopy(link, 'link');
+                      }}
                       className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-[9px] rounded text-emerald-600 font-bold shrink-0 shadow-xs cursor-pointer transition-colors"
                     >
                       {copiedText === 'link' ? 'Copied' : 'Copy'}
