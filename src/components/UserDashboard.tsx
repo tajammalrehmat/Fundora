@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { RealEstateProject, Transaction, UserAccount, InvestmentRecord, ProfitClaimRecord, getAvatarBgClass, getInvestorTier, SystemSettings } from '../types';
-import { generateReceiptPDF } from '../utils/pdfReceipt';
+import { generateReceiptPDF, generateDocumentPDF } from '../utils/pdfReceipt';
 import { 
   TrendingUp, Wallet, ArrowDownCircle, ArrowUpCircle, Users, Percent, Gift, Clock,
   Building, MapPin, Search, Filter, ShieldCheck, ChevronRight, Calculator, CheckCircle2,
   AlertTriangle, Copy, Trash, Upload, Landmark, Sparkles, RefreshCw, X, ChevronDown, Award,
-  FileText, Plus, User, Lock, Check, Crown, Shield
+  FileText, Plus, User, Lock, Check, Crown, Shield, Download, Printer, ZoomIn, ZoomOut, Eye
 } from 'lucide-react';
 
 interface UserDashboardProps {
@@ -101,6 +102,10 @@ export default function UserDashboard({
   const [selectedProjectForCalc, setSelectedProjectForCalc] = useState<RealEstateProject | null>(null);
   const [calculatorShares, setCalculatorShares] = useState<number>(1);
 
+  // PDF Viewer Modal States
+  const [activeViewDoc, setActiveViewDoc] = useState<{ docName: string; project: RealEstateProject } | null>(null);
+  const [pdfZoom, setPdfZoom] = useState<number>(100);
+
   // Wallet Setup Inputs
   const [trcLink, setTrcLink] = useState(activeUser.wallet.usdtTrc20Address || '');
   const [bepLink, setBepLink] = useState(activeUser.wallet.usdtBep20Address || '');
@@ -156,8 +161,31 @@ export default function UserDashboard({
   const [kycCountryInput, setKycCountryInput] = useState(activeUser.kycCountry || '');
   const [kycDocType, setKycDocType] = useState(activeUser.kycDocumentType || 'Passport');
   const [kycFileName, setKycFileName] = useState('');
+  const [kycFilePreview, setKycFilePreview] = useState<string | null>(null);
+  const [kycFileSize, setKycFileSize] = useState<string>('');
+  const kycFileInputRef = useRef<HTMLInputElement>(null);
   const [isKycDragging, setIsKycDragging] = useState(false);
   const [kycStatus, setKycStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const handleKycFileSelect = (file: File) => {
+    if (!file) return;
+    setKycFileName(file.name);
+    
+    // Format size
+    const sizeInMB = file.size / (1024 * 1024);
+    setKycFileSize(`${sizeInMB.toFixed(2)} MB`);
+
+    // Create a local URL/DataURL for image previews
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setKycFilePreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setKycFilePreview(null); // Clear image preview for PDFs/Docs
+    }
+  };
 
   const triggerCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -218,6 +246,101 @@ export default function UserDashboard({
       .filter(t => t.type === 'Referral Bonus' && t.status === 'Completed')
       .reduce((sum, t) => sum + t.amount, 0);
   }, [transactions]);
+
+  // Aggregate user deposit and withdrawal activity trends for Line/Area Chart
+  const chartData = useMemo(() => {
+    // Determine the start date of the chart
+    let startDate = new Date();
+    startDate.setDate(startDate.getDate() - 6); // Default to last 7 days
+
+    if (activeUser?.registrationDate) {
+      try {
+        const regDate = new Date(activeUser.registrationDate);
+        if (!isNaN(regDate.getTime())) {
+          startDate = regDate;
+        }
+      } catch (e) {}
+    }
+
+    // Also check if any transaction date is even older to capture the full history
+    transactions.forEach(tx => {
+      try {
+        const txDate = new Date(tx.date);
+        if (!isNaN(txDate.getTime()) && txDate < startDate) {
+          startDate = txDate;
+        }
+      } catch (e) {}
+    });
+
+    // Limit range to 30 days max to maintain elegant UI presentation & high performance
+    const maxDaysAgo = new Date();
+    maxDaysAgo.setDate(maxDaysAgo.getDate() - 30);
+    if (startDate < maxDaysAgo) {
+      startDate = maxDaysAgo;
+    }
+
+    // Generate continuous YYYY-MM-DD day entries from startDate to now (local date)
+    const days: string[] = [];
+    const endDate = new Date();
+    const current = new Date(startDate);
+    
+    while (current <= endDate) {
+      days.push(current.toISOString().substring(0, 10));
+      current.setDate(current.getDate() + 1);
+    }
+
+    // Sort approved/completed transactions for cumulative running balance calculations
+    const sortedAllTxs = [...transactions]
+      .filter(t => t.status === 'Approved' || t.status === 'Completed')
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Map each day to its respective activity and running balance
+    return days.map(day => {
+      let dailyDeposits = 0;
+      let dailyWithdrawals = 0;
+
+      transactions.forEach(tx => {
+        const txDay = tx.date.substring(0, 10);
+        if (txDay === day && (tx.status === 'Approved' || tx.status === 'Completed')) {
+          if (tx.type === 'Deposit') {
+            dailyDeposits += tx.amount;
+          } else if (tx.type === 'Withdrawal') {
+            dailyWithdrawals += tx.amount;
+          }
+        }
+      });
+
+      // Calculate running balance up to the end of this day
+      let balanceAtDayEnd = 0;
+      sortedAllTxs.forEach(tx => {
+        const txDay = tx.date.substring(0, 10);
+        if (txDay <= day) {
+          if (tx.type === 'Deposit' || tx.type === 'Profit Claim' || tx.type === 'Referral Bonus') {
+            balanceAtDayEnd += tx.amount;
+          } else if (tx.type === 'Withdrawal' || tx.type === 'Investment') {
+            balanceAtDayEnd -= tx.amount;
+          }
+        }
+      });
+
+      // Format date for neat display labels (e.g., "Jun 28")
+      let formattedDate = day;
+      try {
+        const dObj = new Date(day);
+        if (!isNaN(dObj.getTime())) {
+          formattedDate = dObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        }
+      } catch (e) {}
+
+      return {
+        date: day,
+        formattedDate,
+        deposits: dailyDeposits,
+        withdrawals: dailyWithdrawals,
+        balance: Math.max(0, balanceAtDayEnd)
+      };
+    });
+  }, [transactions, activeUser]);
 
   // 10. Total Referrals (from completed transactions or pre-simulated logs)
   const userReferrals = useMemo(() => {
@@ -757,103 +880,370 @@ export default function UserDashboard({
               </div>
             )}
 
-            {/* THE 10 DASHBOARD CARDS */}
-            <div className="space-y-2">
-              <h4 className="text-[10px] font-mono font-bold tracking-wider text-slate-400 uppercase">📊 Investor Live Statistics</h4>
+            {/* THE 10 DASHBOARD CARDS (PREMIUM BENTO LAYOUT) */}
+            <div className="space-y-5">
               
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                {/* 1. Total Investment */}
-                <div id="card-total-investment" className="bg-white border border-[#e2e8f0] border-l-4 border-amber-500 rounded-[1.25rem] p-4 space-y-1 hover:border-amber-400 hover:shadow-xs transition-all text-slate-800">
-                  <span className="text-[10px] text-slate-400 font-medium block">Total Investment</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-black text-slate-900 font-mono">${calculatedTotalInvest.toFixed(2)}</span>
-                  </div>
-                  <span className="text-[9px] text-emerald-600 block font-mono">📋 {investments.length} Share Receipts</span>
+              {/* SECTION A: PRIMARY BALANCES */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-mono font-bold tracking-wider text-slate-400 uppercase flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>My Assets & Valuations</span>
+                  </h4>
+                  <span className="text-[8px] font-mono text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                    <span className="inline-block w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>
+                    USDT Main Ledger
+                  </span>
                 </div>
 
-                {/* 2. Daily Profit */}
-                <div id="card-daily-profit" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 hover:border-emerald-500 transition-all relative overflow-hidden text-slate-800">
-                  <div className="absolute top-3 right-3 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
-                  <span className="text-[10px] text-slate-400 font-medium block">Daily Profit Avg</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-black text-emerald-600 font-mono">+${calculatedDailyProfit.toFixed(2)}</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* 1. Available Balance */}
+                  <div id="card-available-balance" className="bg-gradient-to-br from-slate-900 via-[#0d1e16] to-slate-950 text-white border border-emerald-500/25 rounded-2xl p-5 hover:border-emerald-400/50 hover:shadow-lg hover:shadow-emerald-950/25 transition-all duration-300 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-full blur-2xl pointer-events-none group-hover:scale-110 transition-transform duration-500"></div>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-[11px] text-emerald-400 font-bold font-mono uppercase tracking-widest block">Available Balance</span>
+                      <div className="p-1.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                        <Wallet className="w-4 h-4 text-emerald-400" />
+                      </div>
+                    </div>
+                    <div className="space-y-2 relative z-10">
+                      <div className="flex items-baseline gap-x-1.5">
+                        <span className="text-2xl sm:text-3xl font-black text-emerald-100 font-mono tracking-tight">${availableUserBalance.toFixed(2)}</span>
+                        <span className="text-xs text-emerald-400 font-mono font-bold">USDT</span>
+                      </div>
+                      <p className="text-[10px] sm:text-xs text-slate-400 font-sans leading-relaxed">
+                        Authorized central funds available instantly for property share purchases or immediate yield cashouts.
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-emerald-600 block font-mono">Credited daily 9-10PM</span>
+
+                  {/* 2. Total Investment */}
+                  <div id="card-total-investment" className="bg-gradient-to-br from-slate-900 via-[#0f152d] to-slate-950 text-white border border-indigo-500/25 rounded-2xl p-5 hover:border-indigo-400/50 hover:shadow-lg hover:shadow-indigo-950/25 transition-all duration-300 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full blur-2xl pointer-events-none group-hover:scale-110 transition-transform duration-500"></div>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-[11px] text-indigo-400 font-bold font-mono uppercase tracking-widest block">Total Real Estate Investment</span>
+                      <div className="p-1.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
+                        <Landmark className="w-4 h-4 text-indigo-400" />
+                      </div>
+                    </div>
+                    <div className="space-y-2 relative z-10">
+                      <div className="flex items-baseline gap-x-1.5">
+                        <span className="text-2xl sm:text-3xl font-black text-indigo-100 font-mono tracking-tight">${calculatedTotalInvest.toFixed(2)}</span>
+                        <span className="text-xs text-indigo-400 font-mono font-bold">USD</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <p className="text-[10px] sm:text-xs text-slate-400 font-sans leading-relaxed">
+                          Active fractional real-estate shares generating passive daily dividends.
+                        </p>
+                        <span className="shrink-0 text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg ml-2 font-bold flex items-center gap-1">
+                          📋 {investments.length} Receipts
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION B: PERFORMANCE & PORTFOLIO TRACKER */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-mono font-bold tracking-wider text-slate-400 uppercase flex items-center gap-1.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Performance & Yield Stats</span>
+                  </h4>
                 </div>
 
-                {/* 3. Total Profit Earned */}
-                <div id="card-total-profit" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 hover:border-[#10b981] hover:shadow-xs transition-all text-slate-800">
-                  <span className="text-[10px] text-slate-400 font-medium block">Total Profit Earned</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-slate-900 font-mono">${totalProfitEarnedAmount.toFixed(2)}</span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                  {/* 3. Daily Profit */}
+                  <div id="card-daily-profit" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-emerald-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Daily Profit Avg</span>
+                      <div className="p-1.5 bg-emerald-50 rounded-lg border border-emerald-100 flex items-center relative">
+                        <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
+                        <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-emerald-600 font-mono tracking-tight">+${calculatedDailyProfit.toFixed(2)}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Credited daily 4-5PM & 9-10PM</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-slate-550 block font-mono">Collected into Bal</span>
+
+                  {/* 4. Total Profit Earned */}
+                  <div id="card-total-profit" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-indigo-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Profit</span>
+                      <div className="p-1.5 bg-indigo-50 rounded-lg border border-indigo-100">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${totalProfitEarnedAmount.toFixed(2)}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Collected into Balance</span>
+                    </div>
+                  </div>
+
+                  {/* 5. Active Assets */}
+                  <div id="card-active-projects" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-blue-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Active Assets</span>
+                      <div className="p-1.5 bg-blue-50 rounded-lg border border-blue-100">
+                        <Building className="w-3.5 h-3.5 text-blue-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">{activeProjectsCount} Locations</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Fractional Properties</span>
+                    </div>
+                  </div>
+
+                  {/* 6. Missed Claims */}
+                  <div id="card-missed-claims" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-rose-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-rose-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Missed Claims</span>
+                      <div className="p-1.5 bg-rose-50 rounded-lg border border-rose-100">
+                        <Clock className="w-3.5 h-3.5 text-rose-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-rose-600 font-mono tracking-tight">{missedClaimsCount} {missedClaimsCount === 1 ? 'Claim' : 'Claims'}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-rose-400 font-mono block whitespace-normal leading-tight">
+                        {missedClaimsCount === 0 ? "No unclaimed dividends" : "Missed daily claim windows"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION C: CAPITAL TRANSITS & REWARDS */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-mono font-bold tracking-wider text-slate-400 uppercase flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                    <span>Funding & Affiliates</span>
+                  </h4>
                 </div>
 
-                {/* 4. Total Deposits */}
-                <div id="card-total-deposits" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 hover:border-slate-300 transition-all text-slate-800">
-                  <span className="text-[10px] text-slate-400 font-medium block">Total Deposits</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-slate-700 font-mono">${(activeUser.totalDeposited + totalDepositsSum).toFixed(2)}</span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                  {/* 7. Total Deposits */}
+                  <div id="card-total-deposits" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-slate-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-slate-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Deposits</span>
+                      <div className="p-1.5 bg-slate-50 rounded-lg border border-slate-200">
+                        <ArrowDownCircle className="w-3.5 h-3.5 text-slate-600" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${activeUser.totalDeposited.toFixed(2)}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">USD Equivalents</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-slate-500 block font-mono">USD Wire Equivalent</span>
-                </div>
 
-                {/* 5. Total Withdrawals */}
-                <div id="card-total-withdrawals" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 hover:border-slate-300 transition-all text-slate-800">
-                  <span className="text-[10px] text-slate-400 font-medium block">Total Withdrawals</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-slate-700 font-mono">${(activeUser.totalWithdrawn + totalWithdrawalsSum).toFixed(2)}</span>
+                  {/* 8. Total Withdrawals */}
+                  <div id="card-total-withdrawals" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-rose-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-rose-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Withdrawals</span>
+                      <div className="p-1.5 bg-rose-50 rounded-lg border border-rose-100">
+                        <ArrowUpCircle className="w-3.5 h-3.5 text-rose-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">${activeUser.totalWithdrawn.toFixed(2)}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Paid out securely</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-slate-500 block font-mono">TRC20/BEP20 Paid</span>
-                </div>
 
-                {/* 6. Available Balance */}
-                <div id="card-available-balance" className="bg-[#0f172a] text-white border border-slate-800 rounded-[1.25rem] p-4 space-y-1 hover:border-amber-500 transition-all relative overflow-hidden shadow-sm">
-                  <div className="absolute top-0 right-0 w-16 h-16 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
-                  <span className="text-[10px] text-amber-400 font-medium font-mono uppercase tracking-wider block">Available Balance</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-xl font-black text-amber-300 font-mono">${availableUserBalance.toFixed(2)}</span>
+                  {/* 9. Referral Gains */}
+                  <div id="card-referral-earnings" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-teal-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-teal-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Referral Gains</span>
+                      <div className="p-1.5 bg-teal-50 rounded-lg border border-teal-100">
+                        <Gift className="w-3.5 h-3.5 text-teal-600" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-emerald-600 font-mono tracking-tight">${referralEarningsSum.toFixed(2)}</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-teal-600 font-mono block">10% Direct rewards</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-amber-500/80 block font-mono">Ready to Invest or Withdraw</span>
-                </div>
 
-                {/* 7. Missed Claims */}
-                <div id="card-missed-claims" className="bg-white border border-slate-200 border-l-4 border-rose-500 rounded-[1.25rem] p-4 space-y-1 hover:border-rose-400 transition-all text-slate-800">
-                  <span className="text-[10px] text-slate-400 font-medium block">Missed Claims</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-rose-600 font-mono">{missedClaimsCount} Daily Claims</span>
+                  {/* 10. Total Referrals */}
+                  <div id="card-total-referrals" className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 hover:border-pink-400 hover:shadow-md transition-all duration-300 relative group overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-pink-500/5 rounded-full blur-xl pointer-events-none"></div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400 uppercase font-mono font-bold tracking-wider block">Total Referrals</span>
+                      <div className="p-1.5 bg-pink-50 rounded-lg border border-pink-100">
+                        <Users className="w-3.5 h-3.5 text-pink-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-lg sm:text-xl font-black text-slate-800 font-mono tracking-tight">{totalReferralsCount} Signups</span>
+                      <span className="text-[8px] sm:text-[9.5px] text-slate-400 font-mono block">Unique partners bound</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] text-rose-500 block font-mono">Expired due to window close</span>
                 </div>
+              </div>
 
-                {/* 8. Active Projects */}
-                <div id="card-active-projects" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 text-slate-800 transition-all">
-                  <span className="text-[10px] text-slate-400 font-medium block">Active Projects Bound</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-slate-800 font-mono">{activeProjectsCount} Locations</span>
-                  </div>
-                  <span className="text-[9px] text-slate-500 block font-mono">Residential & Comm</span>
+            </div>
+
+            {/* Financial Activity Trends Chart Card */}
+            <div className="bg-white border border-slate-200/85 rounded-[1.25rem] p-5 shadow-xs relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 mb-4">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-sans">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    Real-time Balance Trend
+                  </h4>
+                  <p className="text-[10px] text-slate-400 font-sans mt-0.5">
+                    Chronological visualization of your total real-time USDT balance over time
+                  </p>
                 </div>
+              </div>
 
-                {/* 9. Referral Earnings */}
-                <div id="card-referral-earnings" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 text-slate-800 transition-all">
-                  <span className="text-[10px] text-slate-400 font-medium block">Referral Earnings</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-emerald-600 font-mono">${referralEarningsSum.toFixed(2)}</span>
-                  </div>
-                  <span className="text-[9px] text-emerald-600 block font-mono">10% Dynamic triggers paid</span>
-                </div>
-
-                {/* 10. Total Referrals */}
-                <div id="card-total-referrals" className="bg-white border border-[#e2e8f0] rounded-[1.25rem] p-4 space-y-1 text-slate-800 transition-all">
-                  <span className="text-[10px] text-slate-400 font-medium block">Total Referrals</span>
-                  <div className="flex items-baseline space-x-1">
-                    <span className="text-lg font-bold text-slate-800 font-mono">{totalReferralsCount} Signups</span>
-                  </div>
-                  <span className="text-[9px] text-slate-500 block font-mono">Unique code binding</span>
-                </div>
-
+              {/* Chart Stage */}
+              <div className="h-[210px] sm:h-[250px] w-full mt-2 font-mono text-[10px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.01}/>
+                      </linearGradient>
+                      <linearGradient id="colorDeposits" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.10}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.01}/>
+                      </linearGradient>
+                      <linearGradient id="colorWithdrawals" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.10}/>
+                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.01}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="formattedDate" 
+                      tickLine={false}
+                      axisLine={false}
+                      stroke="#94a3b8"
+                      tick={{ fill: '#64748b', fontSize: 9 }}
+                    />
+                    <YAxis 
+                      tickLine={false}
+                      axisLine={false}
+                      stroke="#94a3b8"
+                      tick={{ fill: '#64748b', fontSize: 9 }}
+                      tickFormatter={(val) => `$${val}`}
+                    />
+                    <Tooltip 
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          const dayData = payload[0].payload;
+                          return (
+                            <div className="bg-slate-900 border border-slate-800 text-white p-2.5 rounded-xl shadow-xl font-mono text-[9px] space-y-1.5 font-sans">
+                              <p className="text-slate-400 font-bold border-b border-slate-800 pb-1 font-mono">{dayData.formattedDate || label || 'No Date'}</p>
+                              <div className="flex items-center justify-between gap-4 font-mono">
+                                <span className="flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full inline-block bg-blue-500" />
+                                  <span className="text-slate-300">Real-time Balance:</span>
+                                </span>
+                                <span className="font-bold text-white">${Number(dayData.balance).toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 font-mono">
+                                <span className="flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full inline-block bg-emerald-500" />
+                                  <span className="text-emerald-300">Daily Deposits:</span>
+                                </span>
+                                <span className="font-bold text-slate-300">${Number(dayData.deposits).toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 font-mono">
+                                <span className="flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full inline-block bg-rose-500" />
+                                  <span className="text-rose-300">Daily Withdrawals:</span>
+                                </span>
+                                <span className="font-bold text-slate-300">${Number(dayData.withdrawals).toFixed(2)}</span>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend 
+                      verticalAlign="top" 
+                      height={56} 
+                      content={(props) => {
+                        const { payload } = props;
+                        if (!payload) return null;
+                        
+                        const balanceItem = payload.find((entry: any) => entry.dataKey === 'balance' || entry.name?.toLowerCase().includes('balance'));
+                        const otherItems = payload.filter((entry: any) => entry !== balanceItem);
+                        
+                        return (
+                          <div className="flex flex-col items-start justify-start gap-y-1.5 pb-3 text-[9px] sm:text-[10px] font-mono w-full pl-4">
+                            {/* Line 1: Balance */}
+                            {balanceItem && (
+                              <div className="flex justify-start w-full">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50/80 border border-blue-200/60 shadow-2xs">
+                                  <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: balanceItem.color || '#3b82f6' }} />
+                                  <span className="text-blue-700 font-extrabold">{balanceItem.name || balanceItem.value}</span>
+                                </span>
+                              </div>
+                            )}
+                            {/* Line 2: Deposits & Withdrawals */}
+                            <div className="flex flex-row items-center justify-start gap-x-2 flex-wrap w-full">
+                              {otherItems.map((entry: any, index: number) => {
+                                const isDeposit = entry.name?.toLowerCase().includes('deposit');
+                                const bgClass = isDeposit ? 'bg-emerald-50/80 border-emerald-200/60 text-emerald-700' : 'bg-rose-50/80 border-rose-200/60 text-rose-700';
+                                return (
+                                  <span key={`item-${index}`} className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border shadow-2xs ${bgClass}`}>
+                                    <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: entry.color }} />
+                                    <span className="font-extrabold">{entry.name || entry.value}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="balance" 
+                      name="Real-time Balance" 
+                      stroke="#3b82f6" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorBalance)" 
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="deposits" 
+                      name="Deposits" 
+                      stroke="#10b981" 
+                      strokeWidth={1.5}
+                      fillOpacity={1} 
+                      fill="url(#colorDeposits)" 
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="withdrawals" 
+                      name="Withdrawals" 
+                      stroke="#f43f5e" 
+                      strokeWidth={1.5}
+                      fillOpacity={1} 
+                      fill="url(#colorWithdrawals)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
@@ -1016,52 +1406,65 @@ export default function UserDashboard({
           <div className="space-y-4">
             
             {/* Catalog search tools */}
-            <div className="bg-white border border-slate-200 p-5 rounded-[1.25rem] space-y-3.5 shadow-sm text-slate-800">
-              <div className="flex flex-col sm:flex-row gap-3">
+            <div className="bg-slate-50/50 border border-slate-200/60 p-4 sm:p-5 rounded-2xl space-y-4 shadow-xs text-slate-850">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
                 
                 {/* Search Bar */}
-                <div className="relative flex-1">
-                  <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
+                <div className="relative w-full md:col-span-8">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search locations or project names..."
-                    className="w-full bg-slate-50 border border-slate-250 rounded-xl pl-11 pr-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    placeholder="Search locations or assets..."
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/80 transition-all shadow-xs"
                   />
                 </div>
 
-                {/* Sort selector */}
-                <div className="flex items-center space-x-2 shrink-0">
-                  <span className="text-[10px] text-slate-500 uppercase font-mono tracking-wider font-bold">SortBy:</span>
+                {/* Sort selector wrapper */}
+                <div className="flex items-center space-x-2 w-full md:col-span-4 bg-white border border-slate-200 px-3 py-2 rounded-xl shadow-xs">
+                  <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span className="text-[10px] text-slate-400 uppercase font-mono tracking-wider shrink-0 font-bold">Sort:</span>
                   <select 
                     value={sortBy}
                     onChange={(e: any) => setSortBy(e.target.value)}
-                    className="bg-slate-50 border border-slate-250 text-xs rounded-xl p-2.5 text-slate-800 focus:outline-none cursor-pointer"
+                    className="bg-transparent border-none text-xs text-slate-800 focus:outline-none cursor-pointer pr-1 py-0.5 font-bold flex-1 w-full"
                   >
-                    <option value="roi">Expected Yield (High to Low)</option>
-                    <option value="price">Share Price (Low to High)</option>
+                    <option value="roi">Expected Yield</option>
+                    <option value="price">Share Price</option>
                     <option value="shares">Available Shares</option>
                   </select>
                 </div>
               </div>
 
-              {/* Category Filters */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">Category:</span>
-                {['All', 'Residential', 'Commercial', 'Luxury', 'Co-Living'].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all border ${
-                      selectedCategory === cat 
-                        ? 'bg-emerald-500 border-emerald-500 text-white' 
-                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              {/* Category Pills List (Fully responsive wrapping layout - No scrolling) */}
+              <div className="pt-3 border-t border-slate-200/40 space-y-2">
+                <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest font-black block">Asset Class</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { name: 'All', icon: <Sparkles className="w-3 h-3" /> },
+                    { name: 'Residential', icon: <Building className="w-3 h-3" /> },
+                    { name: 'Commercial', icon: <Landmark className="w-3 h-3" /> },
+                    { name: 'Luxury', icon: <Crown className="w-3 h-3" /> },
+                    { name: 'Co-Living', icon: <Users className="w-3 h-3" /> }
+                  ].map((cat) => {
+                    const isActive = selectedCategory === cat.name;
+                    return (
+                      <button
+                        key={cat.name}
+                        onClick={() => setSelectedCategory(cat.name)}
+                        className={`px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all duration-200 flex items-center gap-1.5 border cursor-pointer ${
+                          isActive 
+                            ? 'bg-slate-900 border-slate-900 text-white shadow-sm' 
+                            : 'bg-white border-slate-200 text-slate-650 hover:text-slate-900 hover:border-slate-350 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={isActive ? 'text-amber-400' : 'text-slate-400'}>{cat.icon}</span>
+                        <span>{cat.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -1073,7 +1476,7 @@ export default function UserDashboard({
                   className="bg-white border border-[#e2e8f0] rounded-[1.25rem] overflow-hidden hover:border-[#10b981] shadow-sm hover:shadow-xs transition-all flex flex-col justify-between"
                 >
                   {/* Image and Category */}
-                  <div className="relative aspect-[16/10] bg-slate-100">
+                  <div className="relative aspect-[16/10] overflow-hidden bg-slate-100">
                     <img 
                       src={project.imageUrl} 
                       alt={project.name}
@@ -1145,7 +1548,10 @@ export default function UserDashboard({
                           <span 
                             key={dIdx}
                             className="bg-slate-50 border border-slate-200 hover:border-emerald-500 cursor-pointer p-1 rounded-lg text-slate-600 flex items-center gap-1 shrink-0 transition-colors"
-                            onClick={() => showStatus(`Inquiry Logged: Downloading certified legal prospectus template of ${doc}. Approved by regulatory bodies.`, "info")}
+                            onClick={() => {
+                              setActiveViewDoc({ docName: doc, project });
+                              setPdfZoom(100);
+                            }}
                           >
                             <FileText className="w-2.5 h-2.5 text-[#10b981]" />
                             <span>{doc}</span>
@@ -1306,6 +1712,221 @@ export default function UserDashboard({
               </div>
             )}
 
+            {/* 📄 PDF PROSPECTUS VIEWER MODAL POPUP */}
+            {activeViewDoc && (
+              <div 
+                id="pdf-viewer-modal" 
+                className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-fadeIn"
+              >
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col h-[90vh] sm:h-[85vh] overflow-hidden">
+                  
+                  {/* Top Control Header Bar */}
+                  <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-2 text-left">
+                      <div className="p-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="block text-xs font-bold text-white font-sans max-w-[180px] sm:max-w-xs truncate animate-pulse-subtle" title={activeViewDoc.docName}>
+                          {activeViewDoc.docName}
+                        </span>
+                        <span className="block text-[9px] text-slate-400 font-mono font-medium">
+                          Fundora Securities Ledger System • {activeViewDoc.project.name}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Page & Zoom Controls */}
+                    <div className="flex items-center gap-2.5 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 font-mono text-[10px]">
+                      <button 
+                        onClick={() => setPdfZoom(prev => Math.max(50, prev - 25))}
+                        className="text-slate-400 hover:text-white p-0.5 rounded transition-colors cursor-pointer"
+                        title="Zoom Out"
+                      >
+                        <ZoomOut className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="text-slate-300 font-bold min-w-[36px] text-center">{pdfZoom}%</span>
+                      <button 
+                        onClick={() => setPdfZoom(prev => Math.min(200, prev + 25))}
+                        className="text-slate-400 hover:text-white p-0.5 rounded transition-colors cursor-pointer"
+                        title="Zoom In"
+                      >
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </button>
+                      
+                      <div className="h-3 w-[1px] bg-slate-800 mx-1"></div>
+                      
+                      <span className="text-slate-400 font-medium">Page 1 of 1</span>
+                    </div>
+
+                    {/* Download & Close actions */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          console.log('[PDFViewer] Downloading generated document PDF:', activeViewDoc.docName);
+                          generateDocumentPDF(activeViewDoc.docName, activeViewDoc.project);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Download Document"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Download</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => setActiveViewDoc(null)}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
+                        title="Close Viewer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Close</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Document View Canvas Area */}
+                  <div className="flex-1 bg-slate-950 overflow-auto p-4 sm:p-8 flex justify-center items-start select-none">
+                    <div 
+                      className="bg-white text-slate-900 border border-slate-200 shadow-2xl relative transition-transform duration-200 origin-top text-left font-serif p-8 sm:p-12 w-[210mm] min-h-[297mm] mx-auto"
+                      style={{ 
+                        transform: `scale(${pdfZoom / 100})`,
+                        marginBottom: `${(pdfZoom / 100) * 20}px`
+                      }}
+                    >
+                      {/* Diagonal Watermark */}
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] overflow-hidden select-none">
+                        <span className="text-slate-900 font-sans font-black text-7xl tracking-widest uppercase rotate-45 select-none whitespace-nowrap">
+                          FUNDORA SECURITIES • TRUSTEE DEED • FUNDORA SECURITIES
+                        </span>
+                      </div>
+
+                      {/* Header Logo Letterhead */}
+                      <div className="border-b-2 border-slate-900 pb-4 flex items-start justify-between">
+                        <div>
+                          <h1 className="font-sans font-black text-slate-900 text-xl tracking-wide uppercase leading-tight">
+                            FUNDORA GLOBAL TRUSTEE
+                          </h1>
+                          <p className="font-sans text-[8px] tracking-wider text-slate-500 font-bold uppercase">
+                            REGULATORY FRACTIONAL SECURITIES & ASSET CUSTODY VAULT
+                          </p>
+                          <p className="font-mono text-[7px] text-slate-400 mt-1 uppercase">
+                            MEMBER COMPLIANCE • SECURED REAL WORLD ASSETS
+                          </p>
+                        </div>
+                        <div className="text-right font-mono text-[8px] text-slate-500">
+                          <p className="font-bold text-slate-900">DEED STATUS: ACTIVE</p>
+                          <p>Registry Id: SEC-RWA-00{activeViewDoc.project.id}</p>
+                          <p>Date: June 30, 2026</p>
+                        </div>
+                      </div>
+
+                      {/* Document Body Title */}
+                      <div className="mt-8 text-center">
+                        <h2 className="text-lg font-bold uppercase tracking-widest text-slate-900">
+                          CERTIFIED DEED PROSPECTUS
+                        </h2>
+                        <div className="w-16 h-0.5 bg-slate-900 mx-auto mt-2"></div>
+                      </div>
+
+                      {/* Document Content Details block */}
+                      <div className="mt-8 space-y-4 font-sans text-xs text-slate-800 leading-relaxed">
+                        <p>
+                          This document serves as the regulatory-grade security prospectus record for the co-ownership fractionalized shares associated with the asset listed herein. Under the Trust and Securities Act of 2026, the custody, management, and dividend rights of this asset are held on behalf of accredited investors under the Fundora Secure Ledger system.
+                        </p>
+
+                        {/* Structured Properties Table */}
+                        <div className="border border-slate-300 rounded-lg overflow-hidden mt-6">
+                          <div className="grid grid-cols-3 bg-slate-100 font-bold text-[9px] uppercase py-2 px-3 border-b border-slate-300">
+                            <span className="col-span-1">Registry Field</span>
+                            <span className="col-span-2">Verified Ledger Value</span>
+                          </div>
+                          
+                          <div className="divide-y divide-slate-200 text-[10px]">
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Property Name</span>
+                              <span className="col-span-2 text-slate-900 font-serif font-bold">{activeViewDoc.project.name}</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Property Location</span>
+                              <span className="col-span-2 text-slate-900 font-mono text-[9px]">{activeViewDoc.project.location}</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Asset Category</span>
+                              <span className="col-span-2 text-slate-900">{activeViewDoc.project.category || 'Real Estate Asset'}</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Full Valuation</span>
+                              <span className="col-span-2 text-slate-900 font-mono font-bold">${(activeViewDoc.project.totalShares * activeViewDoc.project.pricePerShare).toLocaleString()} USDT</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Price Per Share</span>
+                              <span className="col-span-2 text-slate-900 font-mono font-bold">${activeViewDoc.project.pricePerShare} USDT</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Asset Yield (APR)</span>
+                              <span className="col-span-2 text-emerald-600 font-bold">{activeViewDoc.project.expectedRoi}% Yearly Expected Return</span>
+                            </div>
+                            <div className="grid grid-cols-3 py-2 px-3">
+                              <span className="font-bold text-slate-500">Prospectus Document</span>
+                              <span className="col-span-2 text-slate-900 font-mono text-[9px] text-blue-600">{activeViewDoc.docName}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Secondary text */}
+                        <div className="mt-6 space-y-3">
+                          <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">
+                            1. Legal Attestation & Escrow Protection
+                          </h4>
+                          <p className="text-[10px] text-slate-600">
+                            {activeViewDoc.docName.toLowerCase().includes('brochure') || activeViewDoc.docName.toLowerCase().includes('specs') ? (
+                              `The prospectus describes a premium investment asset offering. Average occupancy yields exceed traditional residential holdings by an estimated ${(activeViewDoc.project.expectedRoi - 2).toFixed(1)}%. Distributions are paid out in equivalent USDT digital assets following monthly operations reports.`
+                            ) : activeViewDoc.docName.toLowerCase().includes('registry') || activeViewDoc.docName.toLowerCase().includes('approval') || activeViewDoc.docName.toLowerCase().includes('permit') ? (
+                              `This property has been officially approved by the Land Registry. Title Deeds are stored in fractional custody vaults under Index UK-REG-${activeViewDoc.project.id}492A. Escrow controls ensure that direct physical title is legally reserved strictly to protect the co-owners of fractionalized blocks.`
+                            ) : (
+                              `A permanent No-Objection Consent (NOC) has been issued for this asset. It guarantees that the property remains unencumbered and fully cleared for tokenized micro-liquidity distributions under municipal, national, and international standards.`
+                            )}
+                          </p>
+                          
+                          <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[10px] pt-2">
+                            2. Cryptographic Security Seal
+                          </h4>
+                          <p className="text-[10px] text-slate-600">
+                            All fractional transactions, share holdings, and monthly yield disbursements are permanently registered in the secure ledger database. The integrity of this file is validated using cryptographic signatures to prevent unauthorized duplication or alteration.
+                          </p>
+                        </div>
+
+                        {/* Official stamp section at the bottom */}
+                        <div className="border-t border-slate-300 pt-6 mt-12 flex flex-col sm:flex-row items-center justify-between gap-6">
+                          <div className="flex items-center gap-4">
+                            {/* Round visual stamp seal */}
+                            <div className="w-16 h-16 border-4 border-emerald-600 rounded-full flex flex-col items-center justify-center p-1 font-mono text-[6px] text-emerald-600 uppercase font-black tracking-tighter rotate-12">
+                              <span>SECURED</span>
+                              <span>DEED</span>
+                              <span>* RWA *</span>
+                            </div>
+                            <div className="text-left font-mono text-[8px] text-slate-500">
+                              <p className="font-bold text-slate-800">CUSTODIAN SIGNATURE</p>
+                              <p className="italic font-serif text-[10px] text-slate-700">Fundora Asset Trust LLC</p>
+                              <p>Secured Multi-Sig Cryptographic Seal</p>
+                            </div>
+                          </div>
+
+                          <div className="text-center sm:text-right font-mono text-[7px] text-slate-400">
+                            <p>SHA-256 HASH VERIFICATION INDEX</p>
+                            <p className="text-slate-500">8e5f2a1b94d2c7380cf87{activeViewDoc.project.id}a4e5d6c7b8a90123</p>
+                            <p>FUNDORA GLOBAL SECURITIES SYSTEM</p>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -1446,21 +2067,24 @@ export default function UserDashboard({
             </div>
 
             {/* SUB-MENU SELECTION KEYPAD FOR WALLET OPERATIONS */}
-            <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-205 w-full sm:w-max gap-1.5 shadow-xs">
+            <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 w-full sm:w-max gap-1 shadow-xs">
               <button
                 type="button"
                 onClick={() => {
                   setWalletSubTab('deposit');
                   showStatus("Activated Deposit Portal View", "info");
                 }}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-sans font-extrabold uppercase transition-all duration-200 cursor-pointer ${
+                className={`flex-1 sm:flex-none flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-sans font-extrabold uppercase transition-all duration-200 cursor-pointer text-center whitespace-normal sm:whitespace-nowrap ${
                   walletSubTab === 'deposit'
                     ? 'bg-amber-500 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900 font-bold bg-transparent'
                 }`}
               >
-                <ArrowDownCircle className={`w-4 h-4 ${walletSubTab === 'deposit' ? 'text-white' : 'text-slate-500'}`} />
-                📥 Deposit Hub
+                <div className="flex items-center gap-1">
+                  <ArrowDownCircle className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${walletSubTab === 'deposit' ? 'text-white' : 'text-slate-500'}`} />
+                  <span>📥</span>
+                </div>
+                <span className="leading-tight">Deposit Hub</span>
               </button>
               <button
                 type="button"
@@ -1468,14 +2092,17 @@ export default function UserDashboard({
                   setWalletSubTab('withdraw');
                   showStatus("Activated Withdrawal Liquidation Terminal", "info");
                 }}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-sans font-extrabold uppercase transition-all duration-250 cursor-pointer ${
+                className={`flex-1 sm:flex-none flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-sans font-extrabold uppercase transition-all duration-250 cursor-pointer text-center whitespace-normal sm:whitespace-nowrap ${
                   walletSubTab === 'withdraw'
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900 font-bold bg-transparent'
                 }`}
               >
-                <ArrowUpCircle className={`w-4 h-4 ${walletSubTab === 'withdraw' ? 'text-white' : 'text-slate-605'}`} />
-                📤 Withdrawal Hub
+                <div className="flex items-center gap-1">
+                  <ArrowUpCircle className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${walletSubTab === 'withdraw' ? 'text-white' : 'text-slate-600'}`} />
+                  <span>📤</span>
+                </div>
+                <span className="leading-tight">Withdrawal Hub</span>
               </button>
             </div>
 
@@ -1920,16 +2547,25 @@ export default function UserDashboard({
                         <td className="p-3 text-left font-mono text-[9px] text-slate-500 select-all">{tx.id}</td>
                         <td className="p-3 text-left text-slate-800 font-sans font-bold">{tx.type}</td>
                         <td className="p-3 font-bold text-slate-700">${tx.amount.toFixed(2)}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[8px] tracking-wider font-extrabold uppercase ${
-                            tx.status === 'Approved' || tx.status === 'Completed'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : tx.status === 'Pending'
-                                ? 'bg-amber-100 text-amber-800 animate-pulse'
-                                : 'bg-rose-100 text-red-800'
-                          }`}>
-                            {tx.status}
-                          </span>
+                        <td className="p-3 text-center">
+                          <div className="flex justify-center">
+                            {tx.status === 'Approved' || tx.status === 'Completed' ? (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[8.5px] font-extrabold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                                {tx.status}
+                              </span>
+                            ) : tx.status === 'Pending' ? (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[8.5px] font-extrabold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200/80 animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+                                {tx.status}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[8.5px] font-extrabold uppercase tracking-wide bg-rose-50 text-rose-700 border border-rose-200/80">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
+                                {tx.status}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3">
                           <button
@@ -2572,35 +3208,75 @@ export default function UserDashboard({
                         />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Country of Residence</label>
-                          <input
-                            type="text"
-                            value={kycCountryInput}
-                            onChange={(e) => setKycCountryInput(e.target.value)}
-                            className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-slate-850"
-                            placeholder="e.g. United Kingdom"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Document Type</label>
-                          <select
-                            value={kycDocType}
-                            onChange={(e) => setKycDocType(e.target.value)}
-                            className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-slate-850 bg-white"
-                          >
-                            <option value="Passport">Passport</option>
-                            <option value="National ID Card">National ID Card</option>
-                            <option value="Driver's License">Driver's License</option>
-                          </select>
-                        </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Country of Residence</label>
+                        <select
+                          value={kycCountryInput}
+                          onChange={(e) => setKycCountryInput(e.target.value)}
+                          className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-slate-850 bg-white"
+                        >
+                          <option value="">Select Country</option>
+                          <option value="Australia">Australia</option>
+                          <option value="Bahrain">Bahrain</option>
+                          <option value="Brazil">Brazil</option>
+                          <option value="Canada">Canada</option>
+                          <option value="Denmark">Denmark</option>
+                          <option value="France">France</option>
+                          <option value="Germany">Germany</option>
+                          <option value="Hong Kong">Hong Kong</option>
+                          <option value="India">India</option>
+                          <option value="Ireland">Ireland</option>
+                          <option value="Italy">Italy</option>
+                          <option value="Japan">Japan</option>
+                          <option value="Kuwait">Kuwait</option>
+                          <option value="Malaysia">Malaysia</option>
+                          <option value="Netherlands">Netherlands</option>
+                          <option value="New Zealand">New Zealand</option>
+                          <option value="Norway">Norway</option>
+                          <option value="Oman">Oman</option>
+                          <option value="Pakistan">Pakistan</option>
+                          <option value="Qatar">Qatar</option>
+                          <option value="Saudi Arabia">Saudi Arabia</option>
+                          <option value="Singapore">Singapore</option>
+                          <option value="South Africa">South Africa</option>
+                          <option value="Spain">Spain</option>
+                          <option value="Sweden">Sweden</option>
+                          <option value="Switzerland">Switzerland</option>
+                          <option value="Turkey">Turkey</option>
+                          <option value="United Arab Emirates">United Arab Emirates</option>
+                          <option value="United Kingdom">United Kingdom</option>
+                          <option value="United States">United States</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Document Type</label>
+                        <select
+                          value={kycDocType}
+                          onChange={(e) => setKycDocType(e.target.value)}
+                          className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-slate-850 bg-white"
+                        >
+                          <option value="Passport">Passport</option>
+                          <option value="National ID Card">National ID Card</option>
+                          <option value="Driver's License">Driver's License</option>
+                        </select>
                       </div>
                     </div>
 
                     {/* Drag and Drop area */}
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Upload Scanned Document Copy</label>
+                      <input 
+                        type="file" 
+                        ref={kycFileInputRef}
+                        className="hidden"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleKycFileSelect(e.target.files[0]);
+                          }
+                        }}
+                      />
                       <div
                         onDragOver={(e) => {
                           e.preventDefault();
@@ -2611,14 +3287,11 @@ export default function UserDashboard({
                           e.preventDefault();
                           setIsKycDragging(false);
                           if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                            const file = e.dataTransfer.files[0];
-                            setKycFileName(file.name);
+                            handleKycFileSelect(e.dataTransfer.files[0]);
                           }
                         }}
                         onClick={() => {
-                          const mockFiles = ['passport_scan_hd.jpg', 'national_identity_card.pdf', 'drivers_license_valid.png'];
-                          const randomFile = mockFiles[Math.floor(Math.random() * mockFiles.length)];
-                          setKycFileName(randomFile);
+                          kycFileInputRef.current?.click();
                         }}
                         className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-2 select-none min-h-[140px] ${
                           isKycDragging 
@@ -2630,12 +3303,21 @@ export default function UserDashboard({
                       >
                         {kycFileName ? (
                           <>
-                            <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 animate-pulse">
-                              <CheckCircle2 className="w-6 h-6" />
-                            </div>
+                            {kycFilePreview ? (
+                              <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 shadow-sm mb-1">
+                                <img src={kycFilePreview} alt="Doc Preview" className="w-full h-full object-cover" />
+                              </div>
+                            ) : (
+                              <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 animate-pulse">
+                                <CheckCircle2 className="w-6 h-6" />
+                              </div>
+                            )}
                             <div className="space-y-0.5">
                               <span className="block text-xs font-black text-slate-850">Document Attached Successfully</span>
-                              <span className="block text-[10px] font-mono text-emerald-700">{kycFileName}</span>
+                              <span className="block text-[10px] font-mono text-emerald-750 max-w-xs truncate">{kycFileName}</span>
+                              {kycFileSize && (
+                                <span className="block text-[9px] text-slate-400 font-mono">Size: {kycFileSize}</span>
+                              )}
                             </div>
                             <span className="text-[9px] text-slate-400 font-mono">Click again to replace file</span>
                           </>
@@ -2995,7 +3677,7 @@ export default function UserDashboard({
                 <X className="w-5 h-5" />
               </button>
               <span className="text-[10px] text-emerald-400 font-bold tracking-widest block mb-1">✓ SECURE DIGITAL LEDGER RECORD</span>
-              <h3 className="text-lg font-black tracking-tight text-white font-sans">INVESTYA REAL ESTATE</h3>
+              <h3 className="text-lg font-black tracking-tight text-white font-sans">FUNDORA REAL ESTATE</h3>
               <p className="text-[9px] text-slate-400 font-mono mt-0.5">PLATFORM CLEARANCE PROTOCOL & RECEIPT</p>
             </div>
 
@@ -3076,7 +3758,7 @@ export default function UserDashboard({
                   SEAL
                 </div>
                 <p className="text-[9px] text-slate-500 font-sans leading-tight">
-                  This transaction is fully secured on the Investya decentralized registry pipeline. Verify compliance using the Transaction Tracker on the main landing homepage.
+                  This transaction is fully secured on the Fundora decentralized registry pipeline. Verify compliance using the Transaction Tracker on the main landing homepage.
                 </p>
               </div>
 

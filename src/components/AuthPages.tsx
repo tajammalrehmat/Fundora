@@ -9,19 +9,21 @@ import { ShieldAlert, Mail, Lock, User, Key, UserCheck, AlertTriangle, Sparkles,
 import { sendOtpEmail, isEmailServiceConfigured } from '../lib/emailService';
 
 interface AuthPagesProps {
-  initialScreen?: 'login' | 'register' | 'forgot' | 'verify';
+  initialScreen?: 'login' | 'register' | 'forgot' | 'verify' | 'forgot-verify';
   onAuthSuccess: (user: UserAccount | { id: string; email: string; name: string; role: 'user' | 'admin'; referralCode: string; wallet: any; balance: number; totalDeposited: number; totalWithdrawn: number; totalInvestment: number; totalProfitEarned: number; isEmailVerified: boolean; registrationDate: string; referredBy?: string }) => void;
-  onNavigate: (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => void;
+  onNavigate: (page: 'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin', reason?: string) => void;
   usersList: UserAccount[];
   addSystemLog: (type: any, desc: string, status: any) => void;
   authReason?: string | null;
   onRegisterPending?: (user: UserAccount) => void;
+  onPasswordReset?: (email: string, newPassword: string) => void;
 }
 
-export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNavigate, usersList, addSystemLog, authReason, onRegisterPending }: AuthPagesProps) {
-  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'verify'>(initialScreen);
+export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNavigate, usersList, addSystemLog, authReason, onRegisterPending, onPasswordReset }: AuthPagesProps) {
+  const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'verify' | 'forgot-verify'>(initialScreen);
 
   useEffect(() => {
+    console.log('[AuthPages] useEffect triggered for initialScreen:', initialScreen);
     setScreen(initialScreen);
   }, [initialScreen]);
   const [email, setEmail] = useState('');
@@ -36,6 +38,8 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
   const [generatedOtp, setGeneratedOtp] = useState('');
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [showBackupCode, setShowBackupCode] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   // Handle Login
   const handleLogin = (e: React.FormEvent) => {
@@ -54,13 +58,18 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
     // Find in the system usersList
     const matchedUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
     if (matchedUser) {
+      if (matchedUser.password && matchedUser.password !== password) {
+        setErrorMsg('Invalid email or secret password. Please try again.');
+        addSystemLog('Login_Failure', `Failed authorization attempt for ${cleanEmail} (incorrect password)`, 'Alarm');
+        return;
+      }
       addSystemLog('Login_Success', `Successful login verified for ${matchedUser.email}`, 'Secure');
       onAuthSuccess({ ...matchedUser });
-    } else if (cleanEmail === 'admin@fundora.one') {
+    } else if (cleanEmail === 'no-reply@fundora.one') {
       // Emergency Admin access
       const adminAcc: UserAccount = {
         id: 'user-admin',
-        email: 'admin@fundora.one',
+        email: 'no-reply@fundora.one',
         name: 'Platform Administrator',
         role: 'admin',
         referralCode: 'FUNDORA_HQ',
@@ -133,6 +142,7 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
             ...existingUser,
             name: fullName || existingUser.name,
             referredBy: referrer,
+            password: password || existingUser.password
           };
           
           if (onRegisterPending) {
@@ -187,6 +197,7 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
         email: cleanEmail,
         name: fullName,
         role: 'user',
+        password: password,
         referralCode: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
         referredBy: referrer,
         wallet: {
@@ -241,6 +252,7 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
       email: mockVerificationSentTo || email || 'saved_investor@gmail.com',
       name: fullName || (pendingUser ? pendingUser.name : 'New Secure Investor'),
       role: 'user',
+      password: pendingUser ? pendingUser.password : password,
       referralCode: pendingUser ? pendingUser.referralCode : `INV-${Math.floor(1000 + Math.random() * 9000)}`,
       referredBy: pendingUser ? pendingUser.referredBy : enteredReferrer,
       wallet: pendingUser ? pendingUser.wallet : {
@@ -261,23 +273,117 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
     onAuthSuccess(newUser);
   };
 
-  const handleForgotPassword = (e: React.FormEvent) => {
+  const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSuccessMsg(`A secure recovery token has been simulated to ${email}. Check your sandbox log.`);
-    setEmail('');
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!email) {
+      setErrorMsg('Please specify your registered investment email.');
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const matchedUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+
+    if (!matchedUser) {
+      setErrorMsg('No registered investor found with this email address. Please register a new account.');
+      return;
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(code);
+    setMockVerificationSentTo(cleanEmail);
+    setIsSendingOtp(true);
+
+    try {
+      const res = await sendOtpEmail({
+        toEmail: cleanEmail,
+        toName: matchedUser.name,
+        otpCode: code
+      });
+      setIsSendingOtp(false);
+
+      if (res.success) {
+        setSuccessMsg(`A password reset verification code has been dispatched to ${cleanEmail}.`);
+      } else {
+        console.warn("Real-time email sending fallback triggered:", res.error);
+        setSuccessMsg(`[SIMULATION] Verification OTP: ${code}`);
+      }
+      setScreen('forgot-verify');
+      addSystemLog('System_Log', `Password reset initialized for ${cleanEmail}. OTP ${code} dispatched.`, 'Secure');
+    } catch (err) {
+      setIsSendingOtp(false);
+      setScreen('forgot-verify');
+    }
   };
 
-  // Quick Autocomplete buttons for evaluation convenience
-  const fillDemoInvestor = () => {
-    setEmail('investor@gmail.com');
-    setPassword('demo1234');
+  const handleResendForgotPasswordOtp = async () => {
     setErrorMsg('');
+    setSuccessMsg('');
+    const cleanEmail = mockVerificationSentTo.trim().toLowerCase() || email.trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    const matchedUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(code);
+    setIsSendingOtp(true);
+
+    try {
+      const res = await sendOtpEmail({
+        toEmail: cleanEmail,
+        toName: matchedUser ? matchedUser.name : 'Investor',
+        otpCode: code
+      });
+      setIsSendingOtp(false);
+
+      if (res.success) {
+        setSuccessMsg(`A new password reset verification code has been dispatched to ${cleanEmail}.`);
+      } else {
+        console.warn("Real-time email sending fallback triggered:", res.error);
+        setSuccessMsg(`[SIMULATION] Resent OTP: ${code}`);
+      }
+      addSystemLog('System_Log', `Password reset OTP resent for ${cleanEmail}. New OTP ${code} dispatched.`, 'Secure');
+    } catch (err) {
+      setIsSendingOtp(false);
+    }
   };
 
-  const fillDemoAdmin = () => {
-    setEmail('admin@fundora.one');
-    setPassword('admin1234');
+  const handleVerifyResetPassword = (e: React.FormEvent) => {
+    e.preventDefault();
     setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!verificationCode) {
+      setErrorMsg('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    if (verificationCode.trim() !== generatedOtp) {
+      setErrorMsg('Invalid verification code. Please enter the correct code.');
+      return;
+    }
+
+    if (!newPassword) {
+      setErrorMsg('Please specify your new password.');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setErrorMsg('New password and confirm password fields must match exactly.');
+      return;
+    }
+
+    if (onPasswordReset) {
+      onPasswordReset(mockVerificationSentTo, newPassword);
+    }
+
+    setSuccessMsg(`Your password has been successfully reset! Please sign in using your new credentials.`);
+    setVerificationCode('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setScreen('login');
+    onNavigate('login');
   };
 
   return (
@@ -299,13 +405,24 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
 
           {/* Error & Success Messages */}
           {authReason && (
-            <div className="mb-4 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start space-x-3 text-xs text-amber-300">
-              <ShieldAlert className="w-5 h-5 shrink-0 text-amber-400" />
+            <div className="mb-5 p-4 bg-slate-950 border border-slate-850 rounded-xl flex items-start space-x-3.5 text-xs text-slate-300">
+              <ShieldAlert className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
               <div>
-                <span className="font-bold block text-amber-200">Authentication Required</span>
-                <span className="mt-0.5 block leading-relaxed text-[11px] text-slate-300">
-                  Please sign in or register to access the <span className="text-amber-400 font-mono font-bold capitalize">"{authReason}"</span> feature of your fractional portfolio.
-                </span>
+                {authReason === 'Admin Panel' ? (
+                  <>
+                    <span className="font-bold block text-amber-400 text-xs font-sans tracking-tight">Secure Administrator Portal</span>
+                    <span className="mt-1 block leading-relaxed text-[11px] text-slate-400 font-sans">
+                      Please sign in with verified administrative credentials to access the security logs, transactions ledger, and settings workspace.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-bold block text-amber-400 text-xs font-sans tracking-tight">Secure Member Access Required</span>
+                    <span className="mt-1 block leading-relaxed text-[11px] text-slate-400 font-sans">
+                      Sign in to your private co-ownership account to manage your fractional properties, monitor yield, and claim active earnings.
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -347,8 +464,15 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
                   <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400">Secret Password</label>
                   <button 
                     type="button"
-                    onClick={() => setScreen('forgot')}
-                    className="text-[10px] text-amber-400 hover:underline font-mono"
+                    id="auth-forgot-password-link"
+                    onClick={() => {
+                      console.log('[AuthPages] Forgot? button clicked. Current screen:', screen);
+                      setErrorMsg('');
+                      setSuccessMsg('');
+                      setScreen('forgot');
+                      onNavigate('forgot');
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline font-mono cursor-pointer select-none active:scale-95 transition-all py-1.5 px-3.5 -mr-3.5 relative z-10"
                   >
                     Forgot?
                   </button>
@@ -373,36 +497,13 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
                 Access Account
               </button>
 
-              {/* DEMO ACCOUNTS HELPER BOX */}
-              <div className="pt-2 border-t border-slate-800/80">
-                <span className="block text-[10px] font-mono text-slate-400 font-bold uppercase mb-2 text-center text-amber-400">✨ Fast Evaluation Credentials</span>
-                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                  <button 
-                    type="button"
-                    onClick={fillDemoInvestor}
-                    className="p-2 bg-slate-950 border border-slate-800 hover:border-amber-500 rounded-lg text-left"
-                  >
-                    <span className="block font-bold text-slate-300">Investor view</span>
-                    <span className="text-slate-500 text-[9px] truncate block">investor@gmail.com</span>
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={fillDemoAdmin}
-                    className="p-2 bg-slate-950 border border-slate-800 hover:border-amber-500 rounded-lg text-left"
-                  >
-                    <span className="block font-bold text-slate-300">Admin view</span>
-                    <span className="text-slate-500 text-[9px] truncate block">admin@fundora.one</span>
-                  </button>
-                </div>
-              </div>
-
               <div className="text-center pt-2">
                 <span className="text-xs text-slate-400">New around here? </span>
                 <button 
                   type="button"
                   onClick={() => {
                     setErrorMsg('');
-                    setScreen('register');
+                    onNavigate('register');
                   }}
                   className="text-xs text-amber-400 hover:underline font-bold"
                 >
@@ -501,7 +602,7 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
                   type="button"
                   onClick={() => {
                     setErrorMsg('');
-                    setScreen('login');
+                    onNavigate('login');
                   }}
                   className="text-xs text-amber-400 hover:underline font-bold"
                 >
@@ -515,11 +616,11 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
           {screen === 'forgot' && (
             <form onSubmit={handleForgotPassword} className="space-y-4">
               <p className="text-xs text-slate-400 leading-relaxed">
-                Enter your registered investment email address. The system will simulate sending recovery links directly to your control logs.
+                Enter your registered investment email address. A 6-digit password verification code (OTP) will be dispatched to your inbox.
               </p>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400 font-bold">Email Address</label>
+                <label className="block text-[10px] uppercase font-mono font-semibold tracking-wider text-slate-400 font-bold">Registered Email Address</label>
                 <div className="relative">
                   <Mail className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
                   <input 
@@ -535,9 +636,17 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider shadow"
+                disabled={isSendingOtp}
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider shadow flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
               >
-                Send Sandbox Request
+                {isSendingOtp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                    <span>Sending Reset Code...</span>
+                  </>
+                ) : (
+                  <span>Send Reset Code</span>
+                )}
               </button>
 
               <div className="text-center pt-2">
@@ -545,11 +654,102 @@ export default function AuthPages({ initialScreen = 'login', onAuthSuccess, onNa
                   type="button"
                   onClick={() => {
                     setErrorMsg('');
+                    setSuccessMsg('');
                     setScreen('login');
+                    onNavigate('login');
                   }}
                   className="text-xs text-amber-400 hover:underline font-bold"
                 >
                   Return to Login
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* SCREEN 5: FORGOT PASSWORD OTP & RESET */}
+          {screen === 'forgot-verify' && (
+            <form onSubmit={handleVerifyResetPassword} className="space-y-4">
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-2">
+                <div className="flex items-center space-x-2 text-amber-400">
+                  <Key className="w-4 h-4 animate-bounce" />
+                  <span className="font-bold tracking-wide">📨 Reset Code Sent</span>
+                </div>
+                <p className="leading-relaxed text-slate-300 text-[11px]">
+                  Enter the code sent to <strong className="text-white font-mono">{mockVerificationSentTo}</strong> and choose your new password.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400">6-Digit Reset Code</label>
+                <input 
+                  type="text"
+                  maxLength={6}
+                  required
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  placeholder="------"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2.5 text-center text-xs font-mono tracking-widest focus:outline-none focus:border-amber-500 text-slate-100 placeholder-slate-700 font-bold"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400">New Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="password"
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Minimum 6 characters"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400">Confirm New Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input 
+                    type="password"
+                    required
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-11 pr-4 py-2.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-600 hover:to-emerald-600 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider shadow"
+              >
+                Reset Password & Log In
+              </button>
+
+              <div className="flex justify-between items-center text-xs pt-1">
+                <button 
+                  type="button"
+                  disabled={isSendingOtp}
+                  onClick={handleResendForgotPasswordOtp}
+                  className="text-slate-400 hover:text-white hover:underline font-bold disabled:opacity-50"
+                >
+                  {isSendingOtp ? 'Resending...' : 'Resend Code'}
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                    setScreen('login');
+                    onNavigate('login');
+                  }}
+                  className="text-amber-400 hover:underline font-bold"
+                >
+                  Back to Login
                 </button>
               </div>
             </form>

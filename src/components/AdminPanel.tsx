@@ -8,7 +8,7 @@ import { RealEstateProject, Transaction, UserAccount, SecurityLog, ProjectCatego
 import { 
   Shield, Users, Landmark, Coins, FileText, Check, X, ShieldAlert,
   ArrowDownCircle, ArrowUpCircle, Plus, Eye, RefreshCw, Key, AlertOctagon, BarChart2,
-  Unlock, Minus, Wallet
+  Unlock, Minus, Wallet, User, Lock
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -31,6 +31,8 @@ interface AdminPanelProps {
   onDeleteProject?: (projectId: string) => void;
   systemSettings?: SystemSettings;
   onUpdateSystemSettings?: (settings: SystemSettings) => void;
+  onUpdateUser?: (userId: string, updatedFields: Partial<UserAccount>) => void;
+  currentUser?: UserAccount | null;
 }
 
 export default function AdminPanel({
@@ -59,7 +61,9 @@ export default function AdminPanel({
     usdtTrc20QrCode: '',
     usdtBep20QrCode: ''
   },
-  onUpdateSystemSettings
+  onUpdateSystemSettings,
+  onUpdateUser,
+  currentUser
 }: AdminPanelProps) {
   const [localAdminTab, setLocalAdminTab] = useState<'stats' | 'deposits' | 'withdrawals' | 'projects' | 'users' | 'security' | 'settings'>('stats');
 
@@ -82,6 +86,61 @@ export default function AdminPanel({
     setGateTitle(systemSettings.scanGateTitle);
     setGateSubtitle(systemSettings.scanGateSubtitle);
   }, [systemSettings]);
+
+  // Admin self-password reset state
+  const [adminCurrentPassword, setAdminCurrentPassword] = useState('');
+  const [adminNewPassword, setAdminNewPassword] = useState('');
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [adminPassError, setAdminPassError] = useState('');
+  const [adminPassSuccess, setAdminPassSuccess] = useState('');
+
+  const handleAdminChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminPassError('');
+    setAdminPassSuccess('');
+
+    if (!currentUser) {
+      setAdminPassError('Session expired. Please log in again.');
+      return;
+    }
+
+    if (!adminCurrentPassword || !adminNewPassword || !adminConfirmPassword) {
+      setAdminPassError('All password fields are required.');
+      return;
+    }
+
+    // Check if current password is correct
+    if (adminCurrentPassword !== currentUser.password) {
+      setAdminPassError('Incorrect current password.');
+      return;
+    }
+
+    if (adminNewPassword.length < 6) {
+      setAdminPassError('New password must be at least 6 characters long.');
+      return;
+    }
+
+    if (adminNewPassword !== adminConfirmPassword) {
+      setAdminPassError('New passwords do not match.');
+      return;
+    }
+
+    if (adminNewPassword === adminCurrentPassword) {
+      setAdminPassError('New password cannot be the same as current password.');
+      return;
+    }
+
+    // Call onUpdateUser to save the new password
+    if (onUpdateUser) {
+      onUpdateUser(currentUser.id, { password: adminNewPassword });
+      setAdminPassSuccess('Password updated successfully!');
+      setAdminCurrentPassword('');
+      setAdminNewPassword('');
+      setAdminConfirmPassword('');
+    } else {
+      setAdminPassError('Database update is currently unavailable.');
+    }
+  };
 
   // Preview network switcher state
   const [previewNetwork, setPreviewNetwork] = useState<'TRC20' | 'BEP20'>('TRC20');
@@ -301,15 +360,15 @@ export default function AdminPanel({
 
     const totalDepositsVal = transactions
       .filter(t => t.type === 'Deposit' && t.status === 'Approved')
-      .reduce((sum, t) => sum + t.amount, 0) + 1200; // preseed base
+      .reduce((sum, t) => sum + t.amount, 0);
 
     const totalWithdrawalsVal = transactions
       .filter(t => t.type === 'Withdrawal' && t.status === 'Approved')
-      .reduce((sum, t) => sum + t.amount, 0) + 150; // preseed base
+      .reduce((sum, t) => sum + t.amount, 0);
 
     const totalProfitsPaid = transactions
       .filter(t => t.type === 'Profit Claim' && t.status === 'Completed')
-      .reduce((sum, t) => sum + t.amount, 0) + 132.50;
+      .reduce((sum, t) => sum + t.amount, 0);
 
     const totalReferralsVal = transactions
       .filter(t => t.type === 'Referral Bonus' && t.status === 'Completed')
@@ -421,7 +480,7 @@ export default function AdminPanel({
           { id: 'withdrawals', label: `📤 Withdrawals (${pendingWithdrawals.length})` },
           { id: 'projects', label: '🏢 Projects Desk' },
           { id: 'users', label: '👥 User Ledgers' },
-          { id: 'security', label: '🛡️ Threat Logs' },
+          { id: 'security', label: '🛡️ Security Desk' },
           { id: 'settings', label: '⚙️ Scan Gate' }
         ].map((tab) => (
           <button
@@ -1479,69 +1538,265 @@ export default function AdminPanel({
                             </div>
 
                             {/* Content columns */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                               
-                              {/* COLUMN 1: WALLET UNBINDING */}
+                              {/* COLUMN 1: USER COMPLETE PROFILE */}
+                              <div className="space-y-3.5">
+                                <div className="flex items-center space-x-1.5 text-[11px] font-bold text-slate-300 uppercase tracking-wider font-mono">
+                                  <User className="w-4 h-4 text-emerald-400" />
+                                  <span>User Complete Profile</span>
+                                </div>
+
+                                <div className="p-4 bg-slate-900 border border-slate-850 rounded-lg space-y-3 font-sans text-xs text-slate-300">
+                                  <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-850">
+                                    <div>
+                                      <span className="text-[9px] uppercase font-mono text-slate-500 block">Registration Date</span>
+                                      <span className="font-semibold text-white font-mono">{usr.registrationDate ? usr.registrationDate.replace('T', ' ').substring(0, 19) : 'N/A'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[9px] uppercase font-mono text-slate-500 block">Email Verified</span>
+                                      <span className={`inline-flex items-center gap-1 font-bold ${usr.isEmailVerified ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {usr.isEmailVerified ? '✓ Verified' : '✗ Unverified'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1.5 pb-2.5 border-b border-slate-850">
+                                    <span className="text-[9px] uppercase font-mono text-slate-500 block">KYC Verification Details</span>
+                                    <div className="bg-slate-950/40 p-2 rounded border border-slate-850 space-y-1 text-[11px]">
+                                      <div className="flex justify-between">
+                                        <span className="text-slate-500">Full Name:</span>
+                                        <span className="text-white font-semibold">{usr.kycFullName || usr.name || 'Not provided'}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-slate-500">Country:</span>
+                                        <span className="text-white">{usr.kycCountry || 'Not provided'}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-slate-500">Doc Type:</span>
+                                        <span className="text-white">{usr.kycDocumentType || 'Not provided'}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-slate-500">KYC Status:</span>
+                                        <span className={`font-bold ${
+                                          usr.kycStatus === 'Verified' ? 'text-emerald-400' :
+                                          usr.kycStatus === 'Under Review' ? 'text-amber-400' : 'text-slate-400'
+                                        }`}>{usr.kycStatus || 'Unverified'}</span>
+                                      </div>
+                                    </div>
+
+                                    {/* KYC Direct Actions */}
+                                    <div className="flex gap-2 pt-1">
+                                      <button
+                                        onClick={() => {
+                                          if (onUpdateUser) {
+                                            onUpdateUser(usr.id, { kycStatus: 'Verified' });
+                                            alert(`KYC Status updated to Verified for ${usr.email}`);
+                                          }
+                                        }}
+                                        className="flex-1 py-1 bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/30 hover:border-emerald-500/50 text-emerald-400 hover:text-emerald-300 text-[10px] font-bold uppercase rounded cursor-pointer transition-all text-center"
+                                      >
+                                        Approve KYC
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (onUpdateUser) {
+                                            onUpdateUser(usr.id, { kycStatus: 'Unverified' });
+                                            alert(`KYC Status updated to Unverified for ${usr.email}`);
+                                          }
+                                        }}
+                                        className="flex-1 py-1 bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/30 hover:border-rose-500/50 text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase rounded cursor-pointer transition-all text-center"
+                                      >
+                                        Decline
+                                      </button>
+                                    </div>
+
+                                    {/* Email Verification Action */}
+                                    <div className="pt-1.5">
+                                      <button
+                                        onClick={() => {
+                                          if (onUpdateUser) {
+                                            const nextVal = !usr.isEmailVerified;
+                                            onUpdateUser(usr.id, { isEmailVerified: nextVal });
+                                            alert(`Email verification state toggled to: ${nextVal ? 'VERIFIED' : 'UNVERIFIED'}`);
+                                          }
+                                        }}
+                                        className="w-full py-1 bg-slate-800 hover:bg-slate-750 text-slate-200 text-[10px] font-bold uppercase tracking-wider rounded transition-all cursor-pointer"
+                                      >
+                                        Toggle Email Verification
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Password Display & Reset */}
+                                  <div className="space-y-1.5 pb-2.5 border-b border-slate-850">
+                                    <span className="text-[9px] uppercase font-mono text-slate-500 block">Account Password (Admin Visibility)</span>
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        id={`pwd-admin-input-${usr.id}`}
+                                        defaultValue={usr.password || 'no-password-stored'}
+                                        className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
+                                      />
+                                      <button
+                                        onClick={() => {
+                                          const inputElem = document.getElementById(`pwd-admin-input-${usr.id}`) as HTMLInputElement;
+                                          if (inputElem && onUpdateUser) {
+                                            onUpdateUser(usr.id, { password: inputElem.value });
+                                            alert(`Successfully reset password for user ${usr.email} to: ${inputElem.value}`);
+                                          }
+                                        }}
+                                        className="px-2.5 py-1 bg-indigo-500/15 hover:bg-indigo-500/30 border border-indigo-500/30 text-indigo-400 text-[10px] font-bold uppercase rounded cursor-pointer transition-all"
+                                      >
+                                        Reset
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                    <div>
+                                      <span className="text-[9px] uppercase font-mono text-slate-500 block">Referral Code</span>
+                                      <span className="font-mono font-bold text-amber-400 uppercase">{usr.referralCode}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[9px] uppercase font-mono text-slate-500 block">Referred By</span>
+                                      <span className="font-mono font-bold text-indigo-400">{usr.referredBy || 'None'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* COLUMN 2: WALLET GATEWAYS & REFERRAL LIST */}
                               <div className="space-y-3.5">
                                 <div className="flex items-center space-x-1.5 text-[11px] font-bold text-slate-300 uppercase tracking-wider font-mono">
                                   <Wallet className="w-4 h-4 text-indigo-400" />
-                                  <span>Bound Reception Gateways</span>
+                                  <span>Bound Reception Gateways & Network</span>
                                 </div>
 
                                 <div className="space-y-2.5">
                                   
                                   {/* TRC20 Wallet */}
-                                  <div className="p-3 bg-slate-900 border border-slate-850 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                    <div>
+                                  <div className="p-3 bg-slate-900 border border-slate-850 rounded-lg space-y-1.5">
+                                    <div className="flex justify-between items-center">
                                       <span className="text-[9px] uppercase font-mono font-bold text-slate-400 block">USDT (TRC20 Network)</span>
-                                      <span className="text-xs font-mono font-medium text-slate-200 truncate block max-w-[200px]" title={usr.wallet.usdtTrc20Address || 'Not configured'}>
-                                        {usr.wallet.usdtTrc20Address || <span className="text-slate-500 italic">Unconfigured</span>}
-                                      </span>
+                                      {usr.wallet.usdtTrc20Address && (
+                                        <button
+                                          id={`unbind-trc-${usr.id}`}
+                                          onClick={() => {
+                                            if (onUnbindUserWallet) {
+                                              onUnbindUserWallet(usr.id, 'TRC20');
+                                              alert(`Successfully unbound TRC20 wallet address for user ${usr.email}`);
+                                            }
+                                          }}
+                                          className="text-red-400 hover:text-red-300 text-[9px] font-bold uppercase tracking-wider cursor-pointer"
+                                        >
+                                          🔓 Unbind TRC20
+                                        </button>
+                                      )}
                                     </div>
-                                    {usr.wallet.usdtTrc20Address && (
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        id={`trc20-admin-input-${usr.id}`}
+                                        defaultValue={usr.wallet.usdtTrc20Address || ''}
+                                        className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-white font-mono text-[10px] focus:outline-none"
+                                        placeholder="Manually bind TRC20 (starts with T)"
+                                      />
                                       <button
-                                        id={`unbind-trc-${usr.id}`}
                                         onClick={() => {
-                                          if (onUnbindUserWallet) {
-                                            onUnbindUserWallet(usr.id, 'TRC20');
-                                            alert(`Successfully unbound TRC20 wallet address for user ${usr.email}`);
+                                          const inputVal = (document.getElementById(`trc20-admin-input-${usr.id}`) as HTMLInputElement)?.value?.trim();
+                                          if (onUpdateUser) {
+                                            onUpdateUser(usr.id, {
+                                              wallet: {
+                                                ...usr.wallet,
+                                                usdtTrc20Address: inputVal,
+                                                isVerified: !!inputVal
+                                              }
+                                            });
+                                            alert(`TRC20 Wallet address updated for ${usr.email}`);
                                           }
                                         }}
-                                        className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/25 border border-red-500/30 hover:border-red-500/50 text-red-400 hover:text-red-300 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all self-start sm:self-center cursor-pointer"
+                                        className="px-2 py-1 bg-indigo-500 text-white text-[10px] uppercase font-bold rounded cursor-pointer"
                                       >
-                                        🔓 Unbind TRC20
+                                        Save
                                       </button>
-                                    )}
+                                    </div>
                                   </div>
 
                                   {/* BEP20 Wallet */}
-                                  <div className="p-3 bg-slate-900 border border-slate-850 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                    <div>
+                                  <div className="p-3 bg-slate-900 border border-slate-850 rounded-lg space-y-1.5">
+                                    <div className="flex justify-between items-center">
                                       <span className="text-[9px] uppercase font-mono font-bold text-slate-400 block">USDT (BEP20 Network)</span>
-                                      <span className="text-xs font-mono font-medium text-slate-200 truncate block max-w-[200px]" title={usr.wallet.usdtBep20Address || 'Not configured'}>
-                                        {usr.wallet.usdtBep20Address || <span className="text-slate-500 italic">Unconfigured</span>}
-                                      </span>
+                                      {usr.wallet.usdtBep20Address && (
+                                        <button
+                                          id={`unbind-bep-${usr.id}`}
+                                          onClick={() => {
+                                            if (onUnbindUserWallet) {
+                                              onUnbindUserWallet(usr.id, 'BEP20');
+                                              alert(`Successfully unbound BEP20 wallet address for user ${usr.email}`);
+                                            }
+                                          }}
+                                          className="text-red-400 hover:text-red-300 text-[9px] font-bold uppercase tracking-wider cursor-pointer"
+                                        >
+                                          🔓 Unbind BEP20
+                                        </button>
+                                      )}
                                     </div>
-                                    {usr.wallet.usdtBep20Address && (
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        id={`bep20-admin-input-${usr.id}`}
+                                        defaultValue={usr.wallet.usdtBep20Address || ''}
+                                        className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-white font-mono text-[10px] focus:outline-none"
+                                        placeholder="Manually bind BEP20 (starts with 0x)"
+                                      />
                                       <button
-                                        id={`unbind-bep-${usr.id}`}
                                         onClick={() => {
-                                          if (onUnbindUserWallet) {
-                                            onUnbindUserWallet(usr.id, 'BEP20');
-                                            alert(`Successfully unbound BEP20 wallet address for user ${usr.email}`);
+                                          const inputVal = (document.getElementById(`bep20-admin-input-${usr.id}`) as HTMLInputElement)?.value?.trim();
+                                          if (onUpdateUser) {
+                                            onUpdateUser(usr.id, {
+                                              wallet: {
+                                                ...usr.wallet,
+                                                usdtBep20Address: inputVal,
+                                                isVerified: !!inputVal
+                                              }
+                                            });
+                                            alert(`BEP20 Wallet address updated for ${usr.email}`);
                                           }
                                         }}
-                                        className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/25 border border-red-500/30 hover:border-red-500/50 text-red-400 hover:text-red-300 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all self-start sm:self-center cursor-pointer"
+                                        className="px-2 py-1 bg-indigo-500 text-white text-[10px] uppercase font-bold rounded cursor-pointer"
                                       >
-                                        🔓 Unbind BEP20
+                                        Save
                                       </button>
-                                    )}
+                                    </div>
                                   </div>
+
+                                  {/* Direct Referrals List */}
+                                  {(() => {
+                                    const userRefs = usersList.filter(u => u.referredBy?.trim().toUpperCase() === usr.referralCode?.trim().toUpperCase());
+                                    return (
+                                      <div className="p-3 bg-slate-900 border border-slate-850 rounded-lg space-y-2">
+                                        <span className="text-[9px] uppercase font-mono font-bold text-slate-400 block">Direct Referrals Hierarchy ({userRefs.length})</span>
+                                        {userRefs.length === 0 ? (
+                                          <span className="text-slate-500 italic text-[11px] block">No active referrals found under this sponsor.</span>
+                                        ) : (
+                                          <div className="max-h-[110px] overflow-y-auto space-y-1 font-mono text-[10px]">
+                                            {userRefs.map(ref => (
+                                              <div key={ref.id} className="flex justify-between items-center p-1.5 bg-slate-950/60 rounded border border-slate-850">
+                                                <span className="text-slate-300 font-semibold">{ref.name}</span>
+                                                <span className="text-slate-500 text-[9px]">{ref.email}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
 
                                 </div>
                               </div>
 
-                              {/* COLUMN 2: BALANCE ADJUSTMENT */}
+                              {/* COLUMN 3: BALANCE ADJUSTMENT */}
                               <div className="space-y-3.5">
                                 <div className="flex items-center space-x-1.5 text-[11px] font-bold text-slate-300 uppercase tracking-wider font-mono">
                                   <Coins className="w-4 h-4 text-emerald-400" />
@@ -1635,42 +1890,133 @@ export default function AdminPanel({
               </span>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden font-mono text-[10.5px]">
-              <div className="bg-slate-950 p-3 border-b border-slate-850 uppercase text-[9px] font-bold text-slate-400">
-                Threat Matrix Security log
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Left Column: Threat Matrix logs */}
+              <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden font-mono text-[10.5px]">
+                <div className="bg-slate-950 p-3 border-b border-slate-850 uppercase text-[9px] font-bold text-slate-400 flex items-center justify-between">
+                  <span>Threat Matrix Security log</span>
+                  <span className="text-[8px] px-2 py-0.5 bg-rose-500/10 text-rose-400 rounded-full border border-rose-500/20">LIVE STREAMING</span>
+                </div>
+
+                <div className="divide-y divide-slate-850 max-h-[500px] overflow-y-auto">
+                  {securityLogs.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500 font-sans">No security threats or audit entries found.</div>
+                  ) : (
+                    securityLogs.map((log) => (
+                      <div key={log.id} className="p-3.5 space-y-2 hover:bg-slate-850/20 transition-all">
+                        
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[8.5px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded ${
+                            log.eventType === 'Anti_Fraud_Trigger'
+                              ? 'bg-red-500/15 text-red-400 border border-red-500/20'
+                              : log.eventType === 'Admin_Action'
+                                ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                                : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
+                          }`}>
+                            {log.eventType}
+                          </span>
+                          <span className="text-slate-500 text-[9px]">{log.timestamp}</span>
+                        </div>
+
+                        <p className="text-slate-300 leading-relaxed font-sans text-xs">
+                          {log.description}
+                        </p>
+
+                        <div className="flex items-center justify-between text-slate-500 text-[9px] font-medium pt-1 border-t border-slate-950/20">
+                          <span>Gateway Node IP: <strong className="text-slate-400 font-mono">{log.ipAddress}</strong></span>
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <Check className="w-3" /> SECURE INTEGRITY
+                          </span>
+                        </div>
+
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
 
-              <div className="divide-y divide-slate-850">
-                {securityLogs.map((log) => (
-                  <div key={log.id} className="p-3.5 space-y-2 hover:bg-slate-850/20 transition-all">
-                    
-                    <div className="flex items-center justify-between">
-                      <span className={`text-[8.5px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded ${
-                        log.eventType === 'Anti_Fraud_Trigger'
-                          ? 'bg-red-500/15 text-red-400 border border-red-500/20'
-                          : log.eventType === 'Admin_Action'
-                            ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                            : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
-                      }`}>
-                        {log.eventType}
-                      </span>
-                      <span className="text-slate-500 text-[9px]">{log.timestamp}</span>
-                    </div>
-
-                    <p className="text-slate-300 leading-relaxed font-sans text-xs">
-                      {log.description}
-                    </p>
-
-                    <div className="flex items-center justify-between text-slate-500 text-[9px] font-medium pt-1 border-t border-slate-950/20">
-                      <span>Gateway Node IP: <strong className="text-slate-400 font-mono">{log.ipAddress}</strong></span>
-                      <span className="text-emerald-400 flex items-center gap-1">
-                        <Check className="w-3" /> SECURE INTEGRITY
-                      </span>
-                    </div>
-
+              {/* Right Column: Change Admin Password Form */}
+              <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <div className="border-b border-slate-850 pb-3">
+                  <div className="flex items-center space-x-2 text-amber-400">
+                    <Key className="w-4 h-4" />
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider">🔑 Change Admin Password</h3>
                   </div>
-                ))}
+                  <p className="text-[10px] text-slate-400 font-sans mt-1 leading-relaxed">
+                    Keep your administrative privileges secure. Change your system login password instantly.
+                  </p>
+                </div>
+
+                {adminPassError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/25 rounded-xl text-[10px] font-mono text-red-400 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    <span>{adminPassError}</span>
+                  </div>
+                )}
+
+                {adminPassSuccess && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-xl text-[10px] font-mono text-emerald-400 flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" />
+                    <span>{adminPassSuccess}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleAdminChangePassword} className="space-y-4 font-mono text-[10px]">
+                  <div className="space-y-1.5">
+                    <label className="block text-[9px] uppercase font-bold tracking-wider text-slate-400">Current Secret Password</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                      <input 
+                        type="password"
+                        required
+                        value={adminCurrentPassword}
+                        onChange={(e) => setAdminCurrentPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-slate-950 border border-slate-850 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[9px] uppercase font-bold tracking-wider text-slate-400">New Secret Password</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                      <input 
+                        type="password"
+                        required
+                        value={adminNewPassword}
+                        onChange={(e) => setAdminNewPassword(e.target.value)}
+                        placeholder="Minimum 6 characters"
+                        className="w-full bg-slate-950 border border-slate-850 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[9px] uppercase font-bold tracking-wider text-slate-400">Confirm New Password</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                      <input 
+                        type="password"
+                        required
+                        value={adminConfirmPassword}
+                        onChange={(e) => setAdminConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-slate-950 border border-slate-850 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                  >
+                    Confirm Secure Reset
+                  </button>
+                </form>
               </div>
+
             </div>
 
           </div>

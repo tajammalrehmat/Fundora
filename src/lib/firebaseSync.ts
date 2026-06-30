@@ -156,7 +156,27 @@ export const loadUsersFromFirebase = async (): Promise<UserAccount[]> => {
   try {
     const snapshot = await getDocs(collection(db, 'users'));
     if (snapshot.empty) return [INITIAL_USER, INITIAL_ADMIN];
-    return snapshot.docs.map(d => d.data() as UserAccount);
+    const users = snapshot.docs.map(d => d.data() as UserAccount);
+    
+    // Automatically migrate old admin email to no-reply@fundora.one if found
+    let migrated = false;
+    const migratedUsers = users.map(u => {
+      if (u.id === 'user-admin' && u.email === 'admin@fundora.one') {
+        migrated = true;
+        return { ...u, email: 'no-reply@fundora.one' };
+      }
+      return u;
+    });
+
+    if (migrated) {
+      const adminUserObj = migratedUsers.find(u => u.id === 'user-admin');
+      if (adminUserObj) {
+        // Save the updated user back to Firebase
+        await setDoc(doc(db, 'users', adminUserObj.id), adminUserObj);
+      }
+    }
+
+    return migratedUsers;
   } catch (e) {
     console.error('Error loading users from Firebase:', e);
     return [INITIAL_USER, INITIAL_ADMIN];

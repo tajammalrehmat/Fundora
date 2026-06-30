@@ -45,7 +45,7 @@ export default function App() {
     }
   }, [isFirebaseSynced]);
   // Navigation states
-  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'admin'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin'>('home');
   const [activeDashboardTab, setActiveDashboardTab] = useState<'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile'>('overview');
   const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'deposits' | 'withdrawals' | 'projects' | 'users' | 'security'>('stats');
   const [scrollToAnchor, setScrollToAnchor] = useState<string | null>(null);
@@ -64,13 +64,135 @@ export default function App() {
 
   const [usersListState, setUsersListState] = useState<UserAccount[]>(() => {
     const saved = localStorage.getItem('inv_users');
-    return saved ? JSON.parse(saved) : [INITIAL_USER, INITIAL_ADMIN];
+    const list: UserAccount[] = saved ? JSON.parse(saved) : [INITIAL_USER, INITIAL_ADMIN];
+    return list.map(u => u.id === 'user-admin' && u.email === 'admin@fundora.one' ? { ...u, email: 'no-reply@fundora.one' } : u);
   });
 
   const [activeUser, setActiveUser] = useState<UserAccount | null>(() => {
     const saved = localStorage.getItem('inv_active_user');
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.id === 'user-admin' && parsed.email === 'admin@fundora.one') {
+        return { ...parsed, email: 'no-reply@fundora.one' };
+      }
+      return parsed;
+    } catch (_) {
+      return null;
+    }
   });
+
+  // Robust URL Hash Routing Sync using Refs to prevent infinite loop / flickering
+  const activeUserRef = useRef(activeUser);
+  const currentPageRef = useRef(currentPage);
+  const activeDashboardTabRef = useRef(activeDashboardTab);
+  const activeAdminTabRef = useRef(activeAdminTab);
+  const authReasonRef = useRef(authReason);
+
+  useEffect(() => { activeUserRef.current = activeUser; }, [activeUser]);
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  useEffect(() => { activeDashboardTabRef.current = activeDashboardTab; }, [activeDashboardTab]);
+  useEffect(() => { activeAdminTabRef.current = activeAdminTab; }, [activeAdminTab]);
+  useEffect(() => { authReasonRef.current = authReason; }, [authReason]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      const currentUser = activeUserRef.current;
+      const currentPg = currentPageRef.current;
+      const currentDashboardTab = activeDashboardTabRef.current;
+      const currentAdminTab = activeAdminTabRef.current;
+      const currentAuthReason = authReasonRef.current;
+      console.log('[App] handleHashChange triggered. hash:', hash, 'currentPg:', currentPg);
+
+      if (!hash || hash === '#/' || hash === '#/home') {
+        if (currentPg !== 'home') setCurrentPage('home');
+      } else if (hash === '#/login') {
+        if (currentPg !== 'login') setCurrentPage('login');
+      } else if (hash === '#/register') {
+        if (currentPg !== 'register') setCurrentPage('register');
+      } else if (hash === '#/forgot') {
+        if (currentPg !== 'forgot') setCurrentPage('forgot');
+      } else if (hash.startsWith('#/dashboard')) {
+        const parts = hash.split('/');
+        const tab = parts[2] as any;
+        const validTabs = ['overview', 'properties', 'wallet', 'claim', 'referrals', 'profile'];
+        
+        // Authorization Guards
+        if (!currentUser) {
+          if (currentAuthReason !== 'Dashboard') setAuthReason('Dashboard');
+          if (currentPg !== 'login') setCurrentPage('login');
+          window.history.replaceState(null, '', '#/login');
+          return;
+        }
+        if (currentUser.role === 'admin') {
+          if (currentPg !== 'admin') setCurrentPage('admin');
+          return;
+        }
+
+        if (currentPg !== 'dashboard') setCurrentPage('dashboard');
+        if (validTabs.includes(tab)) {
+          if (currentDashboardTab !== tab) setActiveDashboardTab(tab);
+        } else {
+          if (currentDashboardTab !== 'overview') setActiveDashboardTab('overview');
+        }
+      } else if (hash.startsWith('#/admin')) {
+        const parts = hash.split('/');
+        const tab = parts[2] as any;
+        const validTabs = ['stats', 'deposits', 'withdrawals', 'projects', 'users', 'security'];
+
+        // Authorization Guards
+        if (!currentUser) {
+          if (currentAuthReason !== 'Admin Panel') setAuthReason('Admin Panel');
+          if (currentPg !== 'login') setCurrentPage('login');
+          window.history.replaceState(null, '', '#/login');
+          return;
+        }
+        if (currentUser.role !== 'admin') {
+          if (currentPg !== 'dashboard') setCurrentPage('dashboard');
+          return;
+        }
+
+        if (currentPg !== 'admin') setCurrentPage('admin');
+        if (validTabs.includes(tab)) {
+          if (currentAdminTab !== tab) setActiveAdminTab(tab);
+        } else {
+          if (currentAdminTab !== 'stats') setActiveAdminTab('stats');
+        }
+      }
+    };
+
+    // Run on mount or when key dependencies update
+    handleHashChange();
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let newHash = '';
+    if (currentPage === 'home') {
+      newHash = '#/home';
+    } else if (currentPage === 'login') {
+      newHash = '#/login';
+    } else if (currentPage === 'register') {
+      newHash = '#/register';
+    } else if (currentPage === 'forgot') {
+      newHash = '#/forgot';
+    } else if (currentPage === 'dashboard') {
+      newHash = `#/dashboard/${activeDashboardTab}`;
+    } else if (currentPage === 'admin') {
+      newHash = `#/admin/${activeAdminTab}`;
+    }
+
+    console.log('[App] hash update useEffect currentPage:', currentPage, 'currentHash:', window.location.hash, 'newHash:', newHash);
+    if (window.location.hash !== newHash) {
+      console.log('[App] Replacing history hash with:', newHash);
+      window.history.replaceState(null, '', newHash);
+    }
+  }, [currentPage, activeDashboardTab, activeAdminTab]);
 
   const [investmentsList, setInvestmentsList] = useState<InvestmentRecord[]>(() => {
     const saved = localStorage.getItem('inv_investments');
@@ -414,10 +536,11 @@ export default function App() {
   };
 
   // Switch navigation pages safely
-  const handlePageNavigation = (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => {
+  const handlePageNavigation = (page: 'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin', reason?: string) => {
+    console.log('[App] handlePageNavigation called with page:', page, 'reason:', reason);
     if (reason) {
       setAuthReason(reason);
-    } else if (page === 'home' || page === 'login' || page === 'register') {
+    } else if (page === 'home' || page === 'login' || page === 'register' || page === 'forgot') {
       if (!reason) {
         setAuthReason(null);
       }
@@ -451,6 +574,26 @@ export default function App() {
     setCurrentPage(page);
   };
 
+  const saveAndSyncUser = (user: UserAccount) => {
+    if (isFirebaseEnabled()) {
+      saveUserToFirebase(user);
+    }
+  };
+
+  const handleUpdateAnyUser = (userId: string, updatedFields: Partial<UserAccount>) => {
+    setUsersListState(prev => prev.map(u => {
+      if (u.id === userId) {
+        const updatedU = { ...u, ...updatedFields };
+        if (activeUser && activeUser.id === userId) {
+          setActiveUser(updatedU);
+        }
+        saveAndSyncUser(updatedU);
+        return updatedU;
+      }
+      return u;
+    }));
+  };
+
   // Successful Session Login/Register
   const handleAuthSuccess = (userAccount: UserAccount) => {
     setActiveUser(userAccount);
@@ -463,6 +606,8 @@ export default function App() {
       }
       return [...prev, userAccount];
     });
+
+    saveAndSyncUser(userAccount);
 
     // Send verified user straight to dashboard, or admin straight to admin desk
     if (userAccount.role === 'admin') {
@@ -481,6 +626,20 @@ export default function App() {
       }
       return [...prev, pendingUser];
     });
+
+    saveAndSyncUser(pendingUser);
+  };
+
+  const handleResetPassword = (email: string, newPassword: string) => {
+    setUsersListState(prev => prev.map(u => {
+      if (u.email.toLowerCase() === email.toLowerCase()) {
+        const updatedU = { ...u, password: newPassword };
+        saveAndSyncUser(updatedU);
+        return updatedU;
+      }
+      return u;
+    }));
+    addSystemLog('Secure', `Password updated successfully for ${email}.`, 'Secure');
   };
 
   const handleLogout = () => {
@@ -511,6 +670,7 @@ export default function App() {
     };
     setActiveUser(updatedUser);
     setUsersListState(prev => prev.map(u => u.email === updatedUser.email ? updatedUser : u));
+    saveAndSyncUser(updatedUser);
     addSystemLog('Wallet_Verification', `Cryptographic wallets bound & verified for ${updatedUser.email}. TRC20: ${trc20.slice(0, 6)}...`, 'Secure');
   };
 
@@ -520,6 +680,7 @@ export default function App() {
     const updatedUser = { ...activeUser, ...updatedFields };
     setActiveUser(updatedUser);
     setUsersListState(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+    saveAndSyncUser(updatedUser);
     addSystemLog('Wallet_Verification', `User profile updated for ${updatedUser.email}.`, 'Secure');
   };
 
@@ -662,102 +823,105 @@ export default function App() {
 
     let extraTxs: Transaction[] = [];
 
-    setUsersListState(prev => {
-      // Find the user who did the transaction
-      const userObj = prev.find(u => u.id === matchedTx.userId);
-      if (!userObj) return prev;
+    // Find the user who did the transaction
+    const userObj = usersListState.find(u => u.id === matchedTx.userId);
+    if (!userObj) return;
 
-      // Check approved deposits count
-      const approvedDepositsCount = transactionsList.filter(
-        t => t.userId === userObj.id && t.type === 'Deposit' && t.status === 'Approved'
-      ).length;
+    // Check approved deposits count
+    const approvedDepositsCount = transactionsList.filter(
+      t => t.userId === userObj.id && t.type === 'Deposit' && t.status === 'Approved'
+    ).length;
 
-      const isFirstDeposit = matchedTx.type === 'Deposit' && approvedDepositsCount === 0 && matchedTx.amount >= 113;
-      const bonusAmount = isFirstDeposit ? Math.round((matchedTx.amount * 0.10) * 100) / 100 : 0;
+    const isFirstDeposit = matchedTx.type === 'Deposit' && approvedDepositsCount === 0 && matchedTx.amount >= 113;
+    const bonusAmount = isFirstDeposit ? Math.round((matchedTx.amount * 0.10) * 100) / 100 : 0;
 
-      const updatedUsers = prev.map(u => {
-        if (u.id === matchedTx.userId) {
-          if (matchedTx.type === 'Deposit') {
-            const finalBalance = Math.round((u.balance + matchedTx.amount + bonusAmount) * 100) / 100;
-            const updatedU = {
-              ...u,
-              balance: finalBalance,
-              totalDeposited: u.totalDeposited + matchedTx.amount
-            };
-            
-            if (isFirstDeposit && u.referredBy) {
-              // Log referee transaction bonus receipt
-              const refereeTx: Transaction = {
-                id: `tx-bon-fnd-${Date.now()}`,
-                userId: u.id,
-                userEmail: u.email,
-                type: 'Referral Bonus',
-                amount: bonusAmount,
-                date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-                status: 'Completed',
-                description: `🎁 10% First deposit welcome bonus on your qualifying deposit of $${matchedTx.amount.toFixed(2)} USDT.`
-              };
-              extraTxs.push(refereeTx);
-            }
-            
-            if (activeUser && activeUser.id === u.id) {
-              setActiveUser(updatedU);
-            }
-            return updatedU;
-          }
-          if (matchedTx.type === 'Withdrawal') {
-            // Funds were already locked from balances. Just log dispatch check.
-            const updatedU = {
-              ...u,
-              totalWithdrawn: u.totalWithdrawn + matchedTx.amount
-            };
-            if (activeUser && activeUser.id === u.id) {
-              setActiveUser(updatedU);
-            }
-            return updatedU;
-          }
-        }
-        return u;
-      });
-
-      // If first deposit, also credit the referrer
-      if (isFirstDeposit && userObj.referredBy && bonusAmount > 0) {
-        const referralCodeClean = userObj.referredBy.trim().toUpperCase();
-        const referrerUserIndex = updatedUsers.findIndex(u => u.referralCode.toUpperCase() === referralCodeClean);
-        
-        if (referrerUserIndex !== -1) {
-          const referrer = updatedUsers[referrerUserIndex];
-          const updatedReferrer: UserAccount = {
-            ...referrer,
-            balance: Math.round((referrer.balance + bonusAmount) * 100) / 100
+    let updatedUsers = usersListState.map(u => {
+      if (u.id === matchedTx.userId) {
+        if (matchedTx.type === 'Deposit') {
+          const finalBalance = Math.round((u.balance + matchedTx.amount + bonusAmount) * 100) / 100;
+          const updatedU = {
+            ...u,
+            balance: finalBalance,
+            totalDeposited: u.totalDeposited + matchedTx.amount
           };
-          updatedUsers[referrerUserIndex] = updatedReferrer;
-
-          // Log referrer transaction bonus receipt
-          const referrerTx: Transaction = {
-            id: `tx-bon-ref-${Date.now()}`,
-            userId: referrer.id,
-            userEmail: referrer.email,
-            type: 'Referral Bonus',
-            amount: bonusAmount,
-            date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-            status: 'Completed',
-            description: `🎁 10% Referral partner bonus on ${userObj.email}'s first qualifying deposit.`
-          };
-          extraTxs.push(referrerTx);
           
-          if (activeUser && activeUser.id === referrer.id) {
-            setActiveUser(updatedReferrer);
+          if (isFirstDeposit && u.referredBy) {
+            // Log referee transaction bonus receipt
+            const refereeTx: Transaction = {
+              id: `tx-bon-fnd-${Date.now()}`,
+              userId: u.id,
+              userEmail: u.email,
+              type: 'Referral Bonus',
+              amount: bonusAmount,
+              date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+              status: 'Completed',
+              description: `🎁 10% First deposit welcome bonus on your qualifying deposit of $${matchedTx.amount.toFixed(2)} USDT.`
+            };
+            extraTxs.push(refereeTx);
           }
+          
+          if (activeUser && activeUser.id === u.id) {
+            setActiveUser(updatedU);
+          }
+          saveAndSyncUser(updatedU);
+          return updatedU;
+        }
+        if (matchedTx.type === 'Withdrawal') {
+          // Funds were already locked from balances. Just log dispatch check.
+          const updatedU = {
+            ...u,
+            totalWithdrawn: u.totalWithdrawn + matchedTx.amount
+          };
+          if (activeUser && activeUser.id === u.id) {
+            setActiveUser(updatedU);
+          }
+          saveAndSyncUser(updatedU);
+          return updatedU;
         }
       }
-
-      return updatedUsers;
+      return u;
     });
+
+    // If first deposit, also credit the referrer
+    if (isFirstDeposit && userObj.referredBy && bonusAmount > 0) {
+      const referralCodeClean = userObj.referredBy.trim().toUpperCase();
+      const referrerUserIndex = updatedUsers.findIndex(u => u.referralCode.toUpperCase() === referralCodeClean);
+      
+      if (referrerUserIndex !== -1) {
+        const referrer = updatedUsers[referrerUserIndex];
+        const updatedReferrer: UserAccount = {
+          ...referrer,
+          balance: Math.round((referrer.balance + bonusAmount) * 100) / 100
+        };
+        updatedUsers[referrerUserIndex] = updatedReferrer;
+
+        // Log referrer transaction bonus receipt
+        const referrerTx: Transaction = {
+          id: `tx-bon-ref-${Date.now()}`,
+          userId: referrer.id,
+          userEmail: referrer.email,
+          type: 'Referral Bonus',
+          amount: bonusAmount,
+          date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+          status: 'Completed',
+          description: `🎁 10% Referral partner bonus on ${userObj.email}'s first qualifying deposit.`
+        };
+        extraTxs.push(referrerTx);
+        
+        if (activeUser && activeUser.id === referrer.id) {
+          setActiveUser(updatedReferrer);
+        }
+        saveAndSyncUser(updatedReferrer);
+      }
+    }
+
+    setUsersListState(updatedUsers);
 
     setTransactionsList(prev => {
       const updatedList = prev.map(t => t.id === txId ? updatedTx : t);
-      return [...extraTxs, ...updatedList];
+      const combined = [...extraTxs, ...updatedList];
+      combined.forEach(tx => saveTransactionToFirebase(tx));
+      return combined;
     });
 
     addSystemLog('Admin_Action', `${updatedTx.type} ID ${txId} approved by compliance admin. Portfolio balances adjusted.`, 'Secure');
@@ -776,26 +940,30 @@ export default function App() {
       description: 'Transaction declined under secure FBR risk constraints.'
     };
 
-    setTransactionsList(prev => prev.map(t => t.id === txId ? updatedTx : t));
+    setTransactionsList(prev => {
+      const updatedList = prev.map(t => t.id === txId ? updatedTx : t);
+      updatedList.forEach(tx => saveTransactionToFirebase(tx));
+      return updatedList;
+    });
 
     // Refund withdrawals if rejected
     if (matchedTx.type === 'Withdrawal') {
-      setUsersListState(prev => {
-        return prev.map(u => {
-          if (u.id === matchedTx.userId) {
-            const updatedU = {
-              ...u,
-              balance: Math.round((u.balance + matchedTx.amount) * 100) / 100,
-              totalWithdrawn: Math.max(0, u.totalWithdrawn - matchedTx.amount)
-            };
-            if (activeUser && activeUser.id === u.id) {
-              setActiveUser(updatedU);
-            }
-            return updatedU;
+      const updatedUsers = usersListState.map(u => {
+        if (u.id === matchedTx.userId) {
+          const updatedU = {
+            ...u,
+            balance: Math.round((u.balance + matchedTx.amount) * 100) / 100,
+            totalWithdrawn: Math.max(0, u.totalWithdrawn - matchedTx.amount)
+          };
+          if (activeUser && activeUser.id === u.id) {
+            setActiveUser(updatedU);
           }
-          return u;
-        });
+          saveAndSyncUser(updatedU);
+          return updatedU;
+        }
+        return u;
       });
+      setUsersListState(updatedUsers);
     }
 
     addSystemLog('Admin_Action', `${matchedTx.type} ID ${txId} rejected by compliance admin under UK Companies House & FCA compliance guidelines.`, 'Alarm');
@@ -1188,7 +1356,7 @@ export default function App() {
         />
       )}
 
-      {(currentPage === 'login' || currentPage === 'register') && (
+      {(currentPage === 'login' || currentPage === 'register' || currentPage === 'forgot') && (
         <AuthPages 
           initialScreen={currentPage}
           onAuthSuccess={handleAuthSuccess}
@@ -1197,6 +1365,7 @@ export default function App() {
           addSystemLog={addSystemLog}
           authReason={authReason}
           onRegisterPending={handleRegisterPending}
+          onPasswordReset={handleResetPassword}
         />
       )}
 
@@ -1248,6 +1417,8 @@ export default function App() {
           onDeleteProject={handleDeleteProject}
           systemSettings={systemSettings}
           onUpdateSystemSettings={handleUpdateSystemSettings}
+          onUpdateUser={handleUpdateAnyUser}
+          currentUser={activeUser}
         />
       )}
     </MobileShell>

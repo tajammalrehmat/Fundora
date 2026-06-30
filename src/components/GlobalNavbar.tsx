@@ -13,9 +13,9 @@ import {
 } from 'lucide-react';
 
 interface GlobalNavbarProps {
-  currentPage: 'home' | 'login' | 'register' | 'dashboard' | 'admin';
+  currentPage: 'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin';
   activeUser: UserAccount | null;
-  onNavigate: (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => void;
+  onNavigate: (page: 'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin', reason?: string) => void;
   onLogout: () => void;
   // Dashboard tab controls
   activeTab?: 'overview' | 'properties' | 'wallet' | 'claim' | 'referrals' | 'profile';

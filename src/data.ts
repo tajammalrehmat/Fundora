@@ -136,7 +136,7 @@ export const INITIAL_USER: UserAccount = {
 
 export const INITIAL_ADMIN: UserAccount = {
   id: 'user-admin',
-  email: 'admin@fundora.one',
+  email: 'no-reply@fundora.one',
   name: 'Platform Administrator',
   role: 'admin',
   referralCode: 'FUNDORA_HQ',

@@ -3,25 +3,145 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { RealEstateProject, UserAccount } from '../types';
+import React, { useState, useEffect } from 'react';
+import { RealEstateProject, UserAccount, Transaction, ProfitClaimRecord } from '../types';
 import { INITIAL_PROJECTS, FAQS, STATIC_REPORTS } from '../data';
 import { 
   Building, Users, Landmark, Coins, ChevronRight, HelpCircle, 
-  MapPin, Clock, FileText, ArrowUpRight, CheckCircle, Shield, Sparkles, MessageCircle, Send, Menu, X, FileCheck
+  MapPin, Clock, FileText, ArrowUpRight, CheckCircle, Shield, Sparkles, MessageCircle, Send, Menu, X, FileCheck,
+  Search, AlertCircle, RefreshCw
 } from 'lucide-react';
 import fundoraCertificateImg from '../assets/images/fundora_certificate_1782375653209.jpg';
+import { generateReceiptPDF } from '../utils/pdfReceipt';
 
 interface LandingPageProps {
-  onNavigate: (page: 'home' | 'login' | 'register' | 'dashboard' | 'admin', reason?: string) => void;
+  onNavigate: (page: 'home' | 'login' | 'register' | 'forgot' | 'dashboard' | 'admin', reason?: string) => void;
   onSelectProject: (project: RealEstateProject) => void;
   activeUser: UserAccount | null;
+  allTransactions?: Transaction[];
+  allClaims?: ProfitClaimRecord[];
 }
 
-export default function LandingPage({ onNavigate, onSelectProject, activeUser }: LandingPageProps) {
+export default function LandingPage({ 
+  onNavigate, 
+  onSelectProject, 
+  activeUser,
+  allTransactions = [],
+  allClaims = []
+}: LandingPageProps) {
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
+  
+  // Tracking & Verification System States
+  const [searchId, setSearchId] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResult, setSearchResult] = useState<{
+    found: boolean;
+    item?: any;
+    type?: 'transaction' | 'claim';
+    message?: string;
+  } | null>(null);
+
+  // Real-time verification on searchId change
+  useEffect(() => {
+    const cleanId = searchId.trim();
+    if (!cleanId) {
+      setSearchResult(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(() => {
+      const lowerId = cleanId.toLowerCase();
+
+      // 1. Search in allTransactions
+      const foundTx = allTransactions.find(t => t.id.toLowerCase() === lowerId);
+      if (foundTx) {
+        setSearchResult({
+          found: true,
+          type: 'transaction',
+          item: foundTx
+        });
+        setIsSearching(false);
+        return;
+      }
+
+      // 2. Search in allClaims
+      const foundClaim = allClaims.find(c => c.id.toLowerCase() === lowerId);
+      if (foundClaim) {
+        setSearchResult({
+          found: true,
+          type: 'claim',
+          item: foundClaim
+        });
+        setIsSearching(false);
+        return;
+      }
+
+      // 3. Fallback demo values
+      if (lowerId === 'claim-rec-1') {
+        setSearchResult({
+          found: true,
+          type: 'claim',
+          item: {
+            id: 'claim-rec-1',
+            userEmail: 'demo@fundora.com',
+            amount: 145.20,
+            date: '2026-06-25',
+            status: 'Claimed',
+            claimedAt: '04:15 PM'
+          }
+        });
+      } else if (lowerId === 'claim-rec-2') {
+        setSearchResult({
+          found: true,
+          type: 'claim',
+          item: {
+            id: 'claim-rec-2',
+            userEmail: 'demo@fundora.com',
+            amount: 89.50,
+            date: '2026-06-26',
+            status: 'Claimed',
+            claimedAt: '09:12 PM'
+          }
+        });
+      } else if (lowerId === 'inv-rec-101') {
+        setSearchResult({
+          found: true,
+          type: 'transaction',
+          item: {
+            id: 'inv-rec-101',
+            userEmail: 'demo@fundora.com',
+            type: 'Investment',
+            amount: 2500.00,
+            date: '2026-06-24',
+            status: 'Completed',
+            network: 'TRC20',
+            description: 'Acquired 22 fractional shares of Premium Commercial Plaza'
+          }
+        });
+      } else {
+        // Show not found only if user has typed a meaningful prefix (at least 3 chars)
+        if (cleanId.length >= 3) {
+          setSearchResult({
+            found: false,
+            message: `ID "${cleanId}" not found in our active decentralized ledger registries. Please double-check the ID or verify it inside your user dashboard.`
+          });
+        } else {
+          setSearchResult(null);
+        }
+      }
+      setIsSearching(false);
+    }, 200); // 200ms debounce delay for smooth real-time response
+
+    return () => clearTimeout(timer);
+  }, [searchId, allTransactions, allClaims]);
+
+  const handleVerifyLedgerId = (e: React.FormEvent) => {
+    e.preventDefault();
+  };
   const [contactForm, setContactForm] = useState({
     name: '',
     email: '',
@@ -151,6 +271,158 @@ export default function LandingPage({ onNavigate, onSelectProject, activeUser }:
             </div>
             <div className="text-xs text-slate-400 font-medium">Profit Distributed</div>
           </div>
+        </div>
+      </section>
+
+      {/* 2.5 Ledger Verification & Tracking Gate Section */}
+      <section id="ledger-tracking-section" className="py-12 px-6 bg-slate-900 border-b border-slate-950/50 relative overflow-hidden">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="max-w-xl mx-auto space-y-6 relative z-10 text-center">
+          
+          <div className="space-y-2">
+            <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-400 font-mono tracking-wider uppercase">
+              <Shield className="w-3 h-3 text-emerald-400" />
+              <span>Fundora Ledger Protocol</span>
+            </div>
+            <h2 className="text-2xl font-black text-white tracking-tight">
+              Ledger Verification Gate
+            </h2>
+            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+              Verify the cryptographic legitimacy of any deposit, withdrawal, investment, or daily profit claim settlement instantly via our decentralized ledger pipeline.
+            </p>
+          </div>
+
+          <form onSubmit={handleVerifyLedgerId} className="space-y-3">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Enter Transaction ID or Settlement ID..."
+                value={searchId}
+                onChange={(e) => setSearchId(e.target.value)}
+                className="w-full bg-slate-950/80 border border-slate-800 rounded-xl py-3.5 pl-4 pr-12 text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all text-center uppercase tracking-wide"
+              />
+              <button
+                type="submit"
+                disabled={isSearching || !searchId.trim()}
+                className="absolute right-2.5 top-2.5 p-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-800 text-slate-950 disabled:text-slate-500 rounded-lg transition-all cursor-pointer"
+              >
+                {isSearching ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+
+            {/* Format Sample Indicator */}
+            <div className="pt-1.5 text-center space-y-1.5 max-w-sm mx-auto">
+              <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest block">
+                Expected Ledger ID Formats
+              </span>
+              <div className="flex flex-wrap items-center justify-center gap-1.5 font-mono text-[10.5px]">
+                <span className="px-2.5 py-1 bg-slate-950/80 border border-slate-800/85 text-slate-400 rounded-lg">
+                  claim-rec-XXXX
+                </span>
+                <span className="px-2.5 py-1 bg-slate-950/80 border border-slate-800/85 text-slate-400 rounded-lg">
+                  tx-dep-XXXX
+                </span>
+                <span className="px-2.5 py-1 bg-slate-950/80 border border-slate-800/85 text-slate-400 rounded-lg">
+                  tx-wth-XXXX
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                Enter your exact Ledger ID (e.g., <code className="text-emerald-400/90 font-mono">claim-rec-1</code>, <code className="text-emerald-400/90 font-mono">inv-rec-101</code>, or a real-time transaction ID copied from your ledger history) to verify status.
+              </p>
+            </div>
+          </form>
+
+          {/* Verification Results Panel */}
+          {isSearching && (
+            <div className="p-8 bg-slate-950/40 border border-slate-800/60 rounded-xl space-y-3 flex flex-col items-center justify-center animate-pulse">
+              <RefreshCw className="w-6 h-6 text-emerald-500 animate-spin" />
+              <p className="text-[10px] text-emerald-400 font-mono uppercase tracking-widest">Querying central ledger network...</p>
+            </div>
+          )}
+
+          {!isSearching && searchResult && (
+            <div className="p-5 bg-slate-950/60 border border-slate-800 rounded-2xl text-left space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              
+              {/* If Found */}
+              {searchResult.found ? (
+                <>
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-[10px] text-emerald-400 font-mono uppercase font-bold tracking-widest">✓ Verified Ledger Record</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[9px] tracking-wide font-extrabold uppercase ${
+                      searchResult.item.status === 'Approved' || searchResult.item.status === 'Completed' || searchResult.item.status === 'Claimed'
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : searchResult.item.status === 'Pending'
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
+                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                    }`}>
+                      {searchResult.item.status || 'Verified'}
+                    </span>
+                  </div>
+
+                  {/* Grid details */}
+                  <div className="space-y-2.5 font-mono text-[11px]">
+                    <div className="flex justify-between border-b border-slate-900 pb-1.5 gap-2">
+                      <span className="text-slate-500 font-bold shrink-0">LEDGER ID:</span>
+                      <span className="text-slate-200 font-bold select-all break-all text-right">{searchResult.item.id}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-900 pb-1.5 gap-2">
+                      <span className="text-slate-500 font-bold shrink-0">REGISTRY TYPE:</span>
+                      <span className="text-slate-200 font-bold text-right">{searchResult.type === 'transaction' ? searchResult.item.type : 'Daily Yield Claim'}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-900 pb-1.5 gap-2">
+                      <span className="text-slate-500 font-bold shrink-0">SETTLED AMOUNT:</span>
+                      <span className="text-emerald-400 font-black text-right">${Number(searchResult.item.amount).toFixed(2)} USDT</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-900 pb-1.5 gap-2">
+                      <span className="text-slate-500 font-bold shrink-0">TIMESTAMP:</span>
+                      <span className="text-slate-200 text-right">{searchResult.item.date} {searchResult.item.claimedAt ? `(${searchResult.item.claimedAt})` : ''}</span>
+                    </div>
+                    {searchResult.type === 'transaction' && searchResult.item.network && (
+                      <div className="flex justify-between border-b border-slate-900 pb-1.5 gap-2">
+                        <span className="text-slate-500 font-bold shrink-0">NETWORK CHAIN:</span>
+                        <span className="text-slate-200 font-bold text-right">{searchResult.item.network} Protocol</span>
+                      </div>
+                    )}
+                    {searchResult.item.description && (
+                      <div className="flex flex-col pt-1 text-left">
+                        <span className="text-slate-500 font-bold mb-1">CLEARING DETAILS:</span>
+                        <span className="text-slate-300 font-sans italic text-[11px] bg-slate-900/60 p-2.5 rounded border border-slate-900 leading-relaxed">{searchResult.item.description}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* PDF Download trigger */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => generateReceiptPDF(searchResult.item, searchResult.type!)}
+                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-slate-950" />
+                      <span>Download Cryptographic PDF Receipt</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-start gap-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-200">
+                  <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs font-sans block text-rose-300">Verification Failure</span>
+                    <p className="text-[11px] leading-relaxed text-slate-300">{searchResult.message}</p>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
         </div>
       </section>
 
